@@ -133,3 +133,7 @@ endif ()
 if (PORT MATCHES "libvpx")
     set(VCPKG_LIBRARY_LINKAGE static)
 endif ()
+
+if (PORT MATCHES "yaml-cpp")
+    set(VCPKG_LIBRARY_LINKAGE static)
+endif ()

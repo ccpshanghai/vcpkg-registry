@@ -1,11 +1,10 @@
 {
   "name": "carbon-core",
-  "version": "2.6.0",
-  "port-version": 1,
+  "version-semver": "3.0.1",
   "description": "Provides generic low-level functionality and cross-platform abstractions for system calls",
   "homepage": "https://github.com/carbonengine/core",
   "license": "MIT",
-  "supports": "(windows & x64) | osx | (android & arm64) | (ios & arm64)",
+  "supports": "(windows & x64) | osx",
   "dependencies": [
     {
       "name": "ccp-debug-info",
