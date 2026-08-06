@@ -50,7 +50,7 @@
     },
     "carbon-core": {
       "baseline": "3.0.1",
-      "port-version": 0
+      "port-version": 1
     },
     "carbon-d3dinfo": {
       "baseline": "2.0.2",
@@ -138,7 +138,7 @@
     },
     "carbon-scheduler": {
       "baseline": "1.4.3",
-      "port-version": 0
+      "port-version": 1
     },
     "carbon-spacemouse": {
       "baseline": "3.0.0",
