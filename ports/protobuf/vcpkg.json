@@ -1,44 +1,22 @@
 {
   "name": "protobuf",
-  "version": "6.33.4",
+  "version": "3.6.0.1",
   "description": [
-    "Google's language-neutral, platform-neutral, extensible mechanism for serializing structured data.",
-    "Based off of protobuf port version 6.33.4 found in microsoft's vcpkg registry",
-    "Customized for Python 3.12 compatibility, as well as a pyext feature for exporting",
-    "protobuf internals."
+    "Protocol Buffers - Google's data interchange format",
+    "Forked from microsoft/vcpkg's 3.6.0.1 port, which trinity pins through an override",
+    "because the desktop build is on v141. The only change is how protoc is obtained when",
+    "host and target triplets differ: upstream keyed that off CMAKE_HOST_WIN32 and a",
+    "hardcoded x86-windows path, which cannot work for arm64-android or arm64-ios."
   ],
   "homepage": "https://github.com/protocolbuffers/protobuf",
   "license": "BSD-3-Clause",
   "dependencies": [
-    "abseil",
     {
       "name": "protobuf",
-      "host": true
-    },
-    "utf8-range",
-    {
-      "name": "vcpkg-cmake",
-      "host": true
-    },
-    {
-      "name": "vcpkg-cmake-config",
       "host": true
     }
   ],
   "features": {
-    "libprotoc": {
-      "description": "Build the libprotoc compiler library for target builds.",
-      "supports": "!uwp"
-    },
-    "pyext": {
-      "description": "Export pyext protobuf internals",
-      "dependencies": [
-        {
-          "name": "python3",
-          "version>=": "3.12.3#2"
-        }
-      ]
-    },
     "zlib": {
       "description": "ZLib based features like Gzip streams",
       "dependencies": [

@@ -225,7 +225,7 @@
       "port-version": 1
     },
     "protobuf": {
-      "baseline": "6.33.4",
+      "baseline": "3.6.0.1",
       "port-version": 0
     },
     "python3": {
@@ -234,7 +234,7 @@
     },
     "re2c": {
       "baseline": "2.2",
-      "port-version": 0
+      "port-version": 1
     },
     "tracy": {
       "baseline": "0.13.1",
