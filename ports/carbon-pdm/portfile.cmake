@@ -1,7 +1,7 @@
 vcpkg_from_git(
   OUT_SOURCE_PATH SOURCE_PATH
-  URL git@github.com:carbonengine/pdm.git
-  REF 222937b1cd9be45e64caecbd6bb103cc8f70723e
+  URL git@github.com:ccpshanghai/pdm.git
+  REF af6d14ae7f9cef4a4949fa64009b318604ea4b6d
   HEAD_REF master
 )
 

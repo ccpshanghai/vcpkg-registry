@@ -1,7 +1,7 @@
 vcpkg_from_git(
   OUT_SOURCE_PATH SOURCE_PATH
-  URL git@github.com:carbonengine/parser.git
-  REF b58a68538fe4ae63b3854b391744b86f561b901b
+  URL git@github.com:ccpshanghai/parser.git
+  REF 1ad0b204abc02c61c21eb167d3e8743f1e1fce38
   HEAD_REF main
 )
 
