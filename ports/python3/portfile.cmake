@@ -66,7 +66,7 @@ vcpkg_from_github(
     OUT_SOURCE_PATH SOURCE_PATH
     REPO python/cpython
     REF v${VERSION}
-    SHA512 0ca83685fe00d374857ce544eb10037f284a702b14f4cd5c22402b9fbeb557d6d4d23722eae3adbcff1208bf780a50c71146d8d5e3e8a65b84f50bcc5b6968c3
+    SHA512 91a91a6d50311eeac22d42a2bcb95d41b769f3c0539b04731b2c2e1c3200825874a39eb53f2d6410be082c2c099ceb452f67a61c236a22032aaba49dc2f9b2bf
     HEAD_REF master
     PATCHES ${PATCHES}
 )
@@ -121,7 +121,8 @@ if(VCPKG_TARGET_IS_WINDOWS)
     list(APPEND add_libs_rel "${ZLIB_RELEASE}")
     list(APPEND add_libs_dbg "${ZLIB_DEBUG}")
 
-    configure_file("${SOURCE_PATH}/PC/pyconfig.h" "${SOURCE_PATH}/PC/pyconfig.h")
+    # 3.13: PC/pyconfig.h no longer exists in the source tree; it is generated
+    # from PC/pyconfig.h.in into the PCbuild intermediate dir during the build.
     configure_file("${CMAKE_CURRENT_LIST_DIR}/python_vcpkg.props.in" "${SOURCE_PATH}/PCbuild/python_vcpkg.props")
     configure_file("${CMAKE_CURRENT_LIST_DIR}/openssl.props.in" "${SOURCE_PATH}/PCbuild/openssl.props")
     file(WRITE "${SOURCE_PATH}/PCbuild/libffi.props"
@@ -194,7 +195,13 @@ if(VCPKG_TARGET_IS_WINDOWS)
         file(COPY ${PYTHON_EXTENSIONS_DEBUG} DESTINATION "${CURRENT_PACKAGES_DIR}/debug/bin")
     endif()
 
-    file(COPY "${SOURCE_PATH}/Include/" "${SOURCE_PATH}/PC/pyconfig.h"
+    # 3.13: pyconfig.h is generated during the build; pick it out of the build tree
+    file(GLOB_RECURSE generated_pyconfig_h "${CURRENT_BUILDTREES_DIR}/${TARGET_TRIPLET}-rel/PCbuild/**/pyconfig.h")
+    if(NOT generated_pyconfig_h)
+        message(FATAL_ERROR "3.13 generated pyconfig.h not found under ${CURRENT_BUILDTREES_DIR}/${TARGET_TRIPLET}-rel/PCbuild")
+    endif()
+    list(GET generated_pyconfig_h 0 generated_pyconfig_h)
+    file(COPY "${SOURCE_PATH}/Include/" "${generated_pyconfig_h}"
         DESTINATION "${CURRENT_PACKAGES_DIR}/include/python${PYTHON_VERSION_MAJOR}.${PYTHON_VERSION_MINOR}"
         FILES_MATCHING PATTERN *.h
     )
