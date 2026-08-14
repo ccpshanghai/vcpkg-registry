@@ -38,14 +38,20 @@ add_library(libmpdec STATIC ${LIBMPDEC_SOURCES})
 target_compile_definitions(libmpdec PRIVATE
     CONFIG_64
     ANSI
-    # mpdecimal.h's IMPORTEXPORT macro decorates every declaration
-    # __declspec(dllimport) as soon as _DLL is defined (i.e. under vcpkg's
-    # dynamic-CRT triplets), which MSVC then refuses to also define in the
-    # same translation unit. BUILD_LIBMPDEC switches it to dllexport instead,
-    # which is what upstream's own shared-library recipe defines for the
-    # same reason.
-    BUILD_LIBMPDEC
     _CRT_SECURE_NO_WARNINGS
+)
+
+# mpdecimal.h's IMPORTEXPORT macro decorates every declaration
+# __declspec(dllimport) as soon as _DLL is defined (i.e. under vcpkg's
+# dynamic-CRT triplets), which MSVC then refuses to also define in the
+# same translation unit. BUILD_LIBMPDEC switches it to dllexport instead,
+# which is what upstream's own shared-library recipe defines for the
+# same reason. This must be PUBLIC: mpdecimal.h is a consumer-visible
+# header, so any target that includes it needs the same definition, or
+# it decorates the consumer's calls dllimport and the linker goes
+# looking for __imp_ thunks that this plain static .lib doesn't contain.
+target_compile_definitions(libmpdec PUBLIC
+    BUILD_LIBMPDEC
 )
 
 target_include_directories(libmpdec PUBLIC

@@ -1,6 +1,7 @@
 {
   "name": "mpdecimal",
   "version": "4.0.0",
+  "port-version": 1,
   "description": "Complete implementation of the General Decimal Arithmetic Specification",
   "homepage": "https://www.bytereef.org/mpdecimal/",
   "license": "BSD-2-Clause",
