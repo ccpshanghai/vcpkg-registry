@@ -3,3 +3,14 @@
 
 # Force lf line endings on index for files categorized as text
 text eol=lf
+# Patch files must check out LF on every platform, or vcpkg's PATCHES step fails
+# against LF sources and reports it as a corrupt patch rather than a line-ending
+# problem. `-text` disables conversion entirely, so the LF bytes in the index are
+# the bytes on disk regardless of the cloner's core.autocrlf.
+#
+# The `text eol=lf` line above does NOT do this: `text` there is a *pattern*, so it
+# matches a file literally named `text` and nothing else. Verified with
+# `git check-attr text eol -- ports/greenlet/patches/delete_setup_py.patch`, which
+# returns `unspecified` for both. Left in place rather than widened to `* text=auto`,
+# which would renormalize the whole registry.
+*.patch -text
