@@ -75,6 +75,10 @@
           "default-features": false
         },
         {
+          "name": "mpdecimal",
+          "version>=": "4.0.0"
+        },
+        {
           "name": "openssl",
           "default-features": false
         },

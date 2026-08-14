@@ -1,8 +1,10 @@
 Subject: only build required projects
 
 Strips tests-adjacent launchers and unsupported externals (tkinter), routes
-_socket/_ssl/_hashlib unconditionally, and (3.13) drops _decimal pending an
-mpdecimal port. Regenerated against CPython 3.13.15.
+_socket/_ssl/_hashlib unconditionally. _decimal stays in the extension
+module list; 0004 devendors its vendored libmpdec sources onto the
+mpdecimal port the same way it already does for bz2/lzma/sqlite3/expat.
+Regenerated against CPython 3.13.15.
 ---
 diff --git a/PCbuild/_ssl.vcxproj b/PCbuild/_ssl.vcxproj
 index 0283725..72ef544 100644
@@ -31,8 +33,7 @@ index 035fe82..57f0934 100644
 -    <Projects Include="pyshellext.vcxproj" />
 +    <Projects Include="pyshellext.vcxproj" Condition="false" />
      <!-- Extension modules -->
--    <ExtensionModules Include="_asyncio;_zoneinfo;_decimal;_elementtree;_multiprocessing;_overlapped;pyexpat;_queue;select;unicodedata;winsound;_uuid;_wmi" />
-+    <ExtensionModules Include="_asyncio;_zoneinfo;_elementtree;_multiprocessing;_overlapped;pyexpat;_queue;select;unicodedata;winsound;_uuid;_wmi" />
+     <ExtensionModules Include="_asyncio;_zoneinfo;_decimal;_elementtree;_multiprocessing;_overlapped;pyexpat;_queue;select;unicodedata;winsound;_uuid;_wmi" />
      <ExtensionModules Include="_ctypes" Condition="$(IncludeCTypes)" />
      <!-- Extension modules that require external sources -->
      <ExternalModules Include="_bz2;_lzma;_sqlite3" />
