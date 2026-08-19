@@ -3,6 +3,12 @@ vcpkg_from_git(
   URL git@github.com:carbonengine/blueexposure.git
   REF c855175f5f261a301a12b63c0337e8eb8d92b081
   HEAD_REF main
+  # 38 redefinition errors on arm64-android, all from one cause: three places specialise for
+  # both int64_t and long, which are the same type under bionic on LP64. The guards assumed
+  # non-MSVC means long is distinct from int64_t -- true on Apple, false on Linux. Only the
+  # 64-bit Android case is excluded; MSVC, Apple and 32-bit Android keep their existing traits.
+  PATCHES
+    android-lp64-long-is-int64.patch
 )
 
 vcpkg_cmake_configure(

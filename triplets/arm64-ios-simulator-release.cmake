@@ -9,6 +9,17 @@ set(VCPKG_OSX_ARCHITECTURES arm64)
 # Must match CMAKE_OSX_DEPLOYMENT_TARGET in arm64-ios-carbon.cmake, or ports and their
 # consumers are built against different floors.
 set(VCPKG_OSX_DEPLOYMENT_TARGET 26.0)
+
+# Autotools ports cannot detect that this is a cross-compile without help. vcpkg-make
+# derives --host from VCPKG_TARGET_IS_IOS as "${TARGET_ARCH}-apple-darwin" and --build from
+# the build machine, which on an Apple Silicon Mac is the *same string* -- so autoconf sets
+# cross_compiling=no, runs a freshly built iOS a.out on macOS, and dies with
+#   configure: error: cannot run C compiled programs. If you meant to cross compile, use --host
+# libffi is the first port in carbon-blue's closure to hit it; CPython itself is autotools
+# too. config.sub (>=2019) canonicalises this triple, and vcpkg_make.cmake honours an
+# explicit --host over its own derivation. The Android triplets carry the same line for the
+# same reason.
+set(VCPKG_MAKE_BUILD_TRIPLET "--host=aarch64-apple-ios")
 # scripts/toolchains/ios.cmake only auto-selects the simulator sysroot for x64 and x86,
 # so arm64 has to name it here. Same CPU as the device triplet, different sysroot.
 set(VCPKG_OSX_SYSROOT iphonesimulator)
