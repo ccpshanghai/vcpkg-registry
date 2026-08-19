@@ -10,6 +10,17 @@ set(VCPKG_OSX_ARCHITECTURES arm64)
 # consumers are built against different floors.
 set(VCPKG_OSX_DEPLOYMENT_TARGET 26.0)
 
+# Autotools ports cannot detect that this is a cross-compile without help. vcpkg-make
+# derives --host from VCPKG_TARGET_IS_IOS as "${TARGET_ARCH}-apple-darwin" and --build from
+# the build machine, which on an Apple Silicon Mac is the *same string* -- so autoconf sets
+# cross_compiling=no, runs a freshly built iOS a.out on macOS, and dies with
+#   configure: error: cannot run C compiled programs. If you meant to cross compile, use --host
+# libffi is the first port in carbon-blue's closure to hit it; CPython itself is autotools
+# too. config.sub (>=2019) canonicalises this triple, and vcpkg_make.cmake honours an
+# explicit --host over its own derivation. The Android triplets carry the same line for the
+# same reason.
+set(VCPKG_MAKE_BUILD_TRIPLET "--host=aarch64-apple-ios")
+
 # Changes in vcpkg-tool (https://github.com/microsoft/vcpkg-tool/pull/1931) removed the ability to access the VCPKG_ROOT
 # environment variable from inside the VCPKG build environment while VCPKG_LOAD_VCVARS_ENV is set to ON.
 # For consistency, we have changed this for both windows & macos.

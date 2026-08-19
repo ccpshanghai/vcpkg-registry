@@ -50,9 +50,19 @@ target_compile_definitions(libmpdec PRIVATE
 # header, so any target that includes it needs the same definition, or
 # it decorates the consumer's calls dllimport and the linker goes
 # looking for __imp_ thunks that this plain static .lib doesn't contain.
-target_compile_definitions(libmpdec PUBLIC
-    BUILD_LIBMPDEC
-)
+# ...but only where __declspec exists. Every reason above is MSVC-specific: `_DLL` is
+# an MSVC predefine, and `__imp_` thunks are a PE/COFF concern. Apple and Android clang
+# reject `__declspec` outright unless -fdeclspec/-fms-extensions is passed, so defining
+# BUILD_LIBMPDEC there turns mpdecimal.h's every declaration into a hard error:
+#   error: '__declspec' attributes are not enabled
+# mpdecimal.h's own guard is `#if defined(BUILD_LIBMPDEC)` with no platform test, so the
+# gate has to live here. Leaving it undefined lets IMPORTEXPORT stay empty, which is the
+# correct decoration for a static library on ELF/Mach-O.
+if (MSVC)
+  target_compile_definitions(libmpdec PUBLIC
+      BUILD_LIBMPDEC
+  )
+endif ()
 
 target_include_directories(libmpdec PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/libmpdec>

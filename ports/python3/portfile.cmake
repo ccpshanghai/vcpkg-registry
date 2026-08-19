@@ -38,6 +38,8 @@ set(PATCHES
     ccp_customizations/posix-sysconfig-vars-none.patch
     ccp_customizations/relocatable-macos-libraries.patch
     ccp_customizations/skip-proactor-event-loop-tests.patch
+    # Must stay last: generated against the tree with every patch above applied.
+    ccp_customizations/ios-allow-non-framework.patch
 )
 
 if(VCPKG_LIBRARY_LINKAGE STREQUAL "static")
@@ -277,8 +279,34 @@ else()
         list(APPEND OPTIONS "--with-universal-archs=universal2")
     endif()
 
+    if(VCPKG_TARGET_IS_IOS)
+        # configure derives the preprocessor name from the host triple when CPP is unset,
+        # giving "arm64-apple-ios-cpp" -- one of the xcrun wrapper scripts CPython ships in
+        # iOS/Resources/bin and expects on PATH (configure.ac explains this; the build fails
+        # if you neither add that folder to PATH nor set CPP). vcpkg already passes CC, CXX,
+        # AR, NM, RANLIB, STRIP and LD explicitly, so supply CPP the same way instead of
+        # putting a source-tree directory on PATH. This is the shim's own definition with
+        # the triplet's pinned deployment target substituted for the env vars it reads, so
+        # CC and CPP agree on compiler, sysroot and iOS floor.
+        list(APPEND OPTIONS "CPP=xcrun --sdk iphoneos clang -target arm64-apple-ios${VCPKG_OSX_DEPLOYMENT_TARGET} -E")
+    endif()
+
+    # iOS needs these for the same reason macOS does, and VCPKG_TARGET_IS_OSX is false for
+    # iOS -- so without it here, configure finds libintl.h in the installed tree, enables
+    # gettext support in _localemodule.c, and then python.exe fails to link on
+    # _libintl_textdomain / _libintl_localeconv. libintl.a and libiconv.a are both present
+    # and built for arm64-ios in the closure; only the link flags were missing.
     if(VCPKG_TARGET_IS_OSX OR VCPKG_TARGET_IS_BSD)
         list(APPEND OPTIONS "LIBS=-liconv -lintl")
+    elseif(VCPKG_TARGET_IS_IOS)
+        # CoreFoundation is not optional here. libintl's Apple locale code (langprefs.o,
+        # setlocale.o, localename) calls CFPreferencesCopyAppValue,
+        # CFLocaleCopyPreferredLanguages, CFRelease and friends. CPython's own link gets
+        # away without naming it because LINKFORSHARED already carries
+        # -framework CoreFoundation on iOS -- but -lintl propagates to consumers through
+        # python3.pc and sysconfig, so downstream ports (greenlet was the first) link
+        # libintl with no CoreFoundation and fail on those symbols.
+        list(APPEND OPTIONS "LIBS=-liconv -lintl -framework CoreFoundation")
     endif()
 
     if("readline" IN_LIST FEATURES)
@@ -289,6 +317,19 @@ else()
 
     if(VCPKG_TARGET_IS_ANDROID)
         list(APPEND OPTIONS "--without-static-libpython" )
+        # --with-lto with clang makes configure look for llvm-ar as its own precious
+        # variable (AC_PATH_TOOL LLVM_AR); it does not consult AR, which vcpkg does set to
+        # the NDK llvm-ar. Darwin gets away with it because configure falls back to
+        # "xcrun ar" when the lookup fails, and Android has no such fallback -- it errors
+        # with "llvm-ar is required for a --with-lto build with clang". Located through
+        # ANDROID_NDK_HOME, which the arm64-android triplets already pass through, so the
+        # host prebuilt directory name does not have to be hardcoded.
+        file(GLOB _python_ndk_llvm_ar "$ENV{ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/*/bin/llvm-ar")
+        if(NOT _python_ndk_llvm_ar)
+            message(FATAL_ERROR "Could not find llvm-ar under ANDROID_NDK_HOME=$ENV{ANDROID_NDK_HOME}")
+        endif()
+        list(GET _python_ndk_llvm_ar 0 _python_ndk_llvm_ar)
+        list(APPEND OPTIONS "LLVM_AR=${_python_ndk_llvm_ar}")
         list(APPEND VCPKG_CMAKE_CONFIGURE_OPTIONS "-DANDROID_NO_UNDEFINED=OFF")
         if(VCPKG_CROSSCOMPILING)
             # Cannot not run target executables during configure
