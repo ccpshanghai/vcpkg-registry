@@ -324,7 +324,10 @@ else()
         # with "llvm-ar is required for a --with-lto build with clang". Located through
         # ANDROID_NDK_HOME, which the arm64-android triplets already pass through, so the
         # host prebuilt directory name does not have to be hardcoded.
-        file(GLOB _python_ndk_llvm_ar "$ENV{ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/*/bin/llvm-ar")
+        # llvm-ar*, not llvm-ar: on a Windows host the NDK prebuilt is llvm-ar.exe, and
+        # the bare name matched nothing -- every arm64-android python3 build on a Windows
+        # host died here at configure. Unix hosts match the bare name as before.
+        file(GLOB _python_ndk_llvm_ar "$ENV{ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/*/bin/llvm-ar*")
         if(NOT _python_ndk_llvm_ar)
             message(FATAL_ERROR "Could not find llvm-ar under ANDROID_NDK_HOME=$ENV{ANDROID_NDK_HOME}")
         endif()
@@ -345,7 +348,15 @@ else()
     # The version of the build Python must match the version of the cross compiled host Python.
     # https://docs.python.org/3/using/configure.html#cross-compiling-options
     if(VCPKG_CROSSCOMPILING)
-        set(_python_for_build "${CURRENT_HOST_INSTALLED_DIR}/tools/python3/python${PYTHON_VERSION_MAJOR}.${PYTHON_VERSION_MINOR}")
+        # The host package's interpreter is python.exe on a Windows host and
+        # python3.<minor> everywhere else; --with-build-python with the wrong name is
+        # "invalid or missing build python binary" at configure, right after the
+        # llvm-ar fix above got this far on a Windows host for the first time.
+        if(CMAKE_HOST_WIN32)
+            set(_python_for_build "${CURRENT_HOST_INSTALLED_DIR}/tools/python3/python.exe")
+        else()
+            set(_python_for_build "${CURRENT_HOST_INSTALLED_DIR}/tools/python3/python${PYTHON_VERSION_MAJOR}.${PYTHON_VERSION_MINOR}")
+        endif()
         list(APPEND OPTIONS "--with-build-python=${_python_for_build}")
     endif()
 
