@@ -324,7 +324,10 @@ else()
         # with "llvm-ar is required for a --with-lto build with clang". Located through
         # ANDROID_NDK_HOME, which the arm64-android triplets already pass through, so the
         # host prebuilt directory name does not have to be hardcoded.
-        file(GLOB _python_ndk_llvm_ar "$ENV{ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/*/bin/llvm-ar")
+        # llvm-ar*, not llvm-ar: on a Windows host the NDK prebuilt is llvm-ar.exe, and
+        # the bare name matched nothing -- every arm64-android python3 build on a Windows
+        # host died here at configure. Unix hosts match the bare name as before.
+        file(GLOB _python_ndk_llvm_ar "$ENV{ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/*/bin/llvm-ar*")
         if(NOT _python_ndk_llvm_ar)
             message(FATAL_ERROR "Could not find llvm-ar under ANDROID_NDK_HOME=$ENV{ANDROID_NDK_HOME}")
         endif()
