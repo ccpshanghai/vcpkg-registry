@@ -34,6 +34,7 @@ set(PATCHES
     0018-fix-sysconfig-include.patch
     0019-fix-ssl-linkage.patch
     0020-Py_NO_LINK_LIB.patch # Remove in 3.14 https://github.com/python/cpython/pull/19740
+    0021-ios-simulator-min-version.patch
     ccp_customizations/exefile-compatible-multiprocessing.patch
     ccp_customizations/posix-sysconfig-vars-none.patch
     ccp_customizations/relocatable-macos-libraries.patch
@@ -280,15 +281,18 @@ else()
     endif()
 
     if(VCPKG_TARGET_IS_IOS)
-        # configure derives the preprocessor name from the host triple when CPP is unset,
-        # giving "arm64-apple-ios-cpp" -- one of the xcrun wrapper scripts CPython ships in
-        # iOS/Resources/bin and expects on PATH (configure.ac explains this; the build fails
-        # if you neither add that folder to PATH nor set CPP). vcpkg already passes CC, CXX,
-        # AR, NM, RANLIB, STRIP and LD explicitly, so supply CPP the same way instead of
-        # putting a source-tree directory on PATH. This is the shim's own definition with
-        # the triplet's pinned deployment target substituted for the env vars it reads, so
-        # CC and CPP agree on compiler, sysroot and iOS floor.
-        list(APPEND OPTIONS "CPP=xcrun --sdk iphoneos clang -target arm64-apple-ios${VCPKG_OSX_DEPLOYMENT_TARGET} -E")
+        if(VCPKG_OSX_SYSROOT MATCHES "[Ss]imulator")
+            # The device and simulator triplets need different min-version flag families
+            # (0021-ios-simulator-min-version.patch makes configure honor IOS_MIN_VERSION_FLAG,
+            # and IPHONEOS_DEPLOYMENT_TARGET here pins the floor to the triplet's, not the
+            # configure default of 13.0). CPP must match the SDK too -- iphoneos -E on a
+            # simulator triplet makes configure's own probes disagree with the link line.
+            list(APPEND OPTIONS "CPP=xcrun --sdk iphonesimulator clang -target arm64-apple-ios${VCPKG_OSX_DEPLOYMENT_TARGET}-simulator -E")
+            list(APPEND OPTIONS "IOS_MIN_VERSION_FLAG=-mios-simulator-version-min")
+            list(APPEND OPTIONS "IPHONEOS_DEPLOYMENT_TARGET=${VCPKG_OSX_DEPLOYMENT_TARGET}")
+        else()
+            list(APPEND OPTIONS "CPP=xcrun --sdk iphoneos clang -target arm64-apple-ios${VCPKG_OSX_DEPLOYMENT_TARGET} -E")
+        endif()
     endif()
 
     # iOS needs these for the same reason macOS does, and VCPKG_TARGET_IS_OSX is false for
