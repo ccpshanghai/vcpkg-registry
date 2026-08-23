@@ -1,8 +1,11 @@
 vcpkg_from_git(
   OUT_SOURCE_PATH SOURCE_PATH
-  URL git@github.com:carbonengine/imageio.git
-  REF 88d14adcd83033b57df99d7b8629169236e02abf
-  HEAD_REF main
+  # M3 = imageio is the seventh fork (spec §2.5): ASTC work lives on ccpshanghai/imageio
+  # branch m3-ktx2-astc. Landed bottom-up: fork -> port URL/REF (here) -> registry PR ->
+  # trinity baseline bump. "main" tracks upstream + merge-back at fork chains' landing.
+  URL git@github.com:ccpshanghai/imageio.git
+  REF ca94772f0845a285311ae06e783cfd30666b2837
+  HEAD_REF m3-ktx2-astc
 )
 
 vcpkg_cmake_configure(
