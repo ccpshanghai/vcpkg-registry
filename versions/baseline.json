@@ -164,6 +164,10 @@
       "baseline": "2021-04-14",
       "port-version": 1
     },
+    "curl": {
+      "baseline": "8.19.0",
+      "port-version": 0
+    },
     "fxc": {
       "baseline": "10.1",
       "port-version": 0
