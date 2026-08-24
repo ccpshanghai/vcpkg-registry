@@ -1,6 +1,7 @@
 {
   "name": "curl",
   "version": "8.19.0",
+  "port-version": 1,
   "description": "A library for transferring data with URLs",
   "homepage": "https://curl.se/",
   "license": "curl AND ISC AND BSD-3-Clause",
@@ -163,6 +164,19 @@
       "description": "RTMP support",
       "dependencies": [
         "librtmp"
+      ]
+    },
+    "schannel": {
+      "description": "Obsolete. Use feature 'sspi' instead.",
+      "supports": "(windows & !uwp) | mingw",
+      "dependencies": [
+        {
+          "name": "curl",
+          "default-features": false,
+          "features": [
+            "sspi"
+          ]
+        }
       ]
     },
     "ssh": {

@@ -166,7 +166,7 @@
     },
     "curl": {
       "baseline": "8.19.0",
-      "port-version": 0
+      "port-version": 1
     },
     "fxc": {
       "baseline": "10.1",
