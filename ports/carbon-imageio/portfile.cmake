@@ -4,7 +4,7 @@ vcpkg_from_git(
   # branch m3-ktx2-astc. Landed bottom-up: fork -> port URL/REF (here) -> registry PR ->
   # trinity baseline bump. "main" tracks upstream + merge-back at fork chains' landing.
   URL git@github.com:ccpshanghai/imageio.git
-  REF ca94772f0845a285311ae06e783cfd30666b2837
+  REF 2e2ffff015614309f84ed39e664dfaf27ec81b37
   HEAD_REF m3-ktx2-astc
 )
 
