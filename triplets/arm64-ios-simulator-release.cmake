@@ -141,3 +141,48 @@ if (PORT MATCHES "yaml-cpp")
     set(VCPKG_LIBRARY_LINKAGE static)
 endif ()
 
+# --------------------------------------------------------------------------------------
+# Libraries that carry process-global runtime state are DYNAMIC here, whatever the default
+# above says. There are two, and both were found by an app that crashed rather than by
+# reading.
+#
+# The rule: a static archive linked into N shared objects is copied N times, and if what was
+# copied is a runtime -- type objects, registries, an allocator, a thread pool -- then those
+# are N runtimes that cannot recognise each other's objects. Worse, they are N sets of static
+# initializers running in link order inside one image instead of one set that dyld is
+# guaranteed to run first. Neither failure exists on Windows (everything is a DLL) or on
+# arm64-osx-release (its default is dynamic), which is why nothing caught either of these
+# until iOS.
+# --------------------------------------------------------------------------------------
+
+# CPython. It carries PyModule_Type, the type objects, the interpreter state and the GIL, so a
+# static copy is a whole private interpreter -- and iOS had SIX: blue.so, _carbonsocket.so,
+# carbonselect.so, _greenlet.so, _scheduler.so and _carbonssl.so, about 46 MB of duplicated
+# runtime. `import _carbonsocket` then fails with
+#   SystemError: initialization of _carbonsocket did not return an extension module
+# because PyInit__carbonsocket returns a module of its OWN PyModule_Type while the importing
+# interpreter checks it against blue.so's. Blue's startup dies on exactly that
+# ("Failed acquiring carbon-io socket module"), and PyInit_blue's only failure path sets no
+# Python exception, so the app sees a contentless
+#   SystemError: initialization of blue failed without raising an exception
+#
+# The port needs nothing: it always passes --enable-shared on unix and only patches the shared
+# library out for static linkage, and ccp_customizations/ios-allow-non-framework.patch already
+# permits a non-framework CPython on iOS. Measured after: _carbonsocket.so 5.6 MB -> 300 KB.
+if (PORT MATCHES "^python3$")
+    set(VCPKG_LIBRARY_LINKAGE dynamic)
+endif ()
+
+# oneTBB. trinity/TriDevice.cpp:28 has a file-scope
+#   tbb::global_control* g_threadCountControl = new tbb::global_control( ... );
+# and with libtbb.a that initializer runs in link order beside TBB's own -- TriDevice's went
+# first, so global_control_impl::create dereferenced TBB's not-yet-constructed control storage
+# and the app took SIGSEGV at 0x28 inside dlopen of _trinity_metal.so, in
+# dyld4::Loader::findAndRunAllInitializers. As a dylib, dyld runs TBB's initializers before the
+# image that links it, which is what macOS has always relied on.
+#
+# The alternative was making that global lazy in trinity, and it is the wrong fix: it would
+# repair one call site of a guarantee that every other TBB static-init user also needs.
+if (PORT MATCHES "^tbb$")
+    set(VCPKG_LIBRARY_LINKAGE dynamic)
+endif ()

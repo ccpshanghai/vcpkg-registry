@@ -86,7 +86,7 @@
     },
     "carbon-imageio": {
       "baseline": "2.0.6",
-      "port-version": 1
+      "port-version": 6
     },
     "carbon-imagetools": {
       "baseline": "2.0.3",
@@ -164,6 +164,10 @@
       "baseline": "2021-04-14",
       "port-version": 1
     },
+    "curl": {
+      "baseline": "8.19.0",
+      "port-version": 2
+    },
     "fxc": {
       "baseline": "10.1",
       "port-version": 0
@@ -179,6 +183,10 @@
     "greenlet": {
       "baseline": "3.1.1",
       "port-version": 2
+    },
+    "imgui": {
+      "baseline": "1.92.7",
+      "port-version": 0
     },
     "intel-xess": {
       "baseline": "2.0.1",
