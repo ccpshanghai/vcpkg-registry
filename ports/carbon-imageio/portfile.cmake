@@ -1,11 +1,14 @@
 vcpkg_from_git(
   OUT_SOURCE_PATH SOURCE_PATH
-  # M3 = imageio is the seventh fork (spec §2.5): ASTC work lives on ccpshanghai/imageio
-  # branch m3-ktx2-astc. Landed bottom-up: fork -> port URL/REF (here) -> registry PR ->
-  # trinity baseline bump. "main" tracks upstream + merge-back at fork chains' landing.
+  # M3 = imageio is the seventh fork (spec §2.5): the ASTC/KTX2 work lives on
+  # ccpshanghai/imageio. The m3-ktx2-astc branch squash-merged into the fork's mobile-exp
+  # as caaf391e, so the REF here is the merged commit rather than the topic branch's tip --
+  # a pin to a retired branch breaks the day the branch goes (the same trap the trinity pin
+  # fix walked one level up). Landed bottom-up: fork -> port URL/REF (here) -> registry PR
+  # -> trinity baseline bump.
   URL git@github.com:ccpshanghai/imageio.git
-  REF 89eeef8bb873dda8c2542c11fceb1eb0901b513f
-  HEAD_REF m3-ktx2-astc
+  REF caaf391e0055689b5e0c496fb66137f815e748ae
+  HEAD_REF mobile-exp
 )
 
 vcpkg_cmake_configure(
