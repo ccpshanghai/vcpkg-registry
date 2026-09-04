@@ -59,6 +59,24 @@ if (PORT MATCHES "zlib")
     set(VCPKG_LIBRARY_LINKAGE static)
 endif ()
 
+# CPython, shared -- the same rule and the same reason as arm64-ios-release.cmake's python3
+# block: a static libpython is a whole private interpreter, and blue.so, _trinity_vulkan.so
+# and every Python-imported carbon .so would each get their own. On Android the failure is
+# the one iOS measured ("initialization of X did not return an extension module"), and
+# the app shell's payload contract requires libpython3.13.so by name (M6 second-half spec §5).
+if (PORT MATCHES "^python3$")
+    set(VCPKG_LIBRARY_LINKAGE dynamic)
+endif ()
+
+# oneTBB, shared -- trinity/TriDevice.cpp:28 constructs a tbb::global_control at file scope,
+# and with libtbb.a its initializer runs in link order beside TBB's own. iOS took SIGSEGV
+# inside dlopen(_trinity_metal.so) for exactly this; bionic, like dyld, runs a DT_NEEDED
+# library's initializers before the image that needs it, so the shared form is the fix here
+# too rather than making that global lazy in trinity.
+if (PORT MATCHES "^tbb$")
+    set(VCPKG_LIBRARY_LINKAGE dynamic)
+endif ()
+
 if (PORT MATCHES "libuv")
     list(APPEND VCPKG_CMAKE_CONFIGURE_OPTIONS "-DBUILD_TESTING=OFF")
 endif()
