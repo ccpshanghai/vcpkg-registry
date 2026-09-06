@@ -1,8 +1,8 @@
 vcpkg_from_git(
   OUT_SOURCE_PATH SOURCE_PATH
   URL git@github.com:ccpshanghai/core.git
-  REF 05a27f4812a126dd9d9d56ca8df2288d45707a5f
-  HEAD_REF m6-android-blue-exports
+  REF c8e50e0851897cdea0f2669a863f3616eb9356ab
+  HEAD_REF mobile-exp
 )
 
 vcpkg_check_features(OUT_FEATURE_OPTIONS FEATURE_OPTIONS
