@@ -1,7 +1,7 @@
 vcpkg_from_git(
   OUT_SOURCE_PATH SOURCE_PATH
   URL git@github.com:ccpshanghai/core.git
-  REF 275603a7071dfeb6d2cbed000365e1b24e237551
+  REF c8e50e0851897cdea0f2669a863f3616eb9356ab
   HEAD_REF mobile-exp
 )
 
