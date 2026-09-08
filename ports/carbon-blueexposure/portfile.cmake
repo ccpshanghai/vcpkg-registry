@@ -7,8 +7,16 @@ vcpkg_from_git(
   # both int64_t and long, which are the same type under bionic on LP64. The guards assumed
   # non-MSVC means long is distinct from int64_t -- true on Apple, false on Linux. Only the
   # 64-bit Android case is excluded; MSVC, Apple and 32-bit Android keep their existing traits.
+  # Three interfaces blue dynamic_casts to from blue.so on objects other libraries create --
+  # IList, IPythonMethods, IPythonNumeric -- get a key function and default visibility, so
+  # their vtable and typeinfo exist once (in blue) instead of privately in every .so. Without
+  # it the NDK's libc++abi (type_info compared by address) makes every such cast nullptr,
+  # and the app's first run on Android died in IList_Thunk::Pyappend. See BLUE_INTERFACE_ANCHOR
+  # in the patched BlueTypes.h. Windows and Apple are unaffected by the cast and unchanged in
+  # behaviour: one trailing do-nothing virtual per interface.
   PATCHES
     android-lp64-long-is-int64.patch
+    android-interface-typeinfo-anchors.patch
 )
 
 vcpkg_cmake_configure(
