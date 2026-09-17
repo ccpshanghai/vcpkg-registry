@@ -13,9 +13,9 @@ diff --git a/PCbuild/pythoncore.vcxproj b/PCbuild/pythoncore.vcxproj
 index dbe236829a..5f30a35eb3 100644
 --- a/PCbuild/pythoncore.vcxproj
 +++ b/PCbuild/pythoncore.vcxproj
-@@ -540,8 +540,10 @@
-     <ClCompile Include="..\Python\deepfreeze\deepfreeze.c" />
-     <!-- END deepfreeze -->
+@@ -641,8 +641,10 @@
+     <ClCompile Include="..\Python\traceback.c" />
+     <ClCompile Include="..\Python\tracemalloc.c" />
    </ItemGroup>
 -  <ItemGroup Condition="$(IncludeExternals)">
 +  <ItemGroup>

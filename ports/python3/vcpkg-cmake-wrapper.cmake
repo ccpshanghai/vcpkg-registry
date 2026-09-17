@@ -67,12 +67,29 @@ if(_PythonFinder_WantLibs)
     )
 
     if(_PythonFinder_WantInterp)
+        # FindPython *runs* the interpreter to read its version, so when cross-compiling the
+        # one in the target tree is useless: <target>/tools/python3/python3.13 is, for
+        # arm64-ios, a Mach-O iOS executable, and find_package fails with
+        #   Could NOT find Python3 (missing: Interpreter) ... Cannot run the interpreter
+        # carbon-scheduler and carbon-io both hit this. Look in the host triplet's tools tree
+        # instead -- the same thing vcpkg.cmake does for its own tools_base_path, and the same
+        # interpreter CPython's cross-build uses via --with-build-python.
+        #
+        # VCPKG_HOST_TRIPLET only exists if the port passed it, so a port that does not
+        # declare one keeps the old behaviour and has to supply Python3_EXECUTABLE itself.
+        set(_PythonFinder_InterpPath "${_VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/tools/python3")
+        if(DEFINED VCPKG_HOST_TRIPLET
+           AND NOT VCPKG_HOST_TRIPLET STREQUAL ""
+           AND NOT VCPKG_HOST_TRIPLET STREQUAL VCPKG_TARGET_TRIPLET)
+            set(_PythonFinder_InterpPath "${_VCPKG_INSTALLED_DIR}/${VCPKG_HOST_TRIPLET}/tools/python3")
+        endif()
         find_program(
             ${_PythonFinder_PREFIX}_EXECUTABLE
             NAMES "python" "python@PYTHON_VERSION_MAJOR@.@PYTHON_VERSION_MINOR@"
-            PATHS "${_VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/tools/python3"
+            PATHS "${_PythonFinder_InterpPath}"
             NO_DEFAULT_PATH
         )
+        unset(_PythonFinder_InterpPath)
     endif()
 
     # These are duplicated as normal variables to nullify FindPython's checksum verifications.
@@ -128,6 +145,15 @@ if(_PythonFinder_WantLibs)
                 list(APPEND _PYTHON_INTERFACE_LIBS
                     Iconv::Iconv
                     "$<IF:$<CONFIG:Debug>,${Intl_LIBRARY_DEBUG},${Intl_LIBRARY_RELEASE}>"
+                    # Intl drags in CoreFoundation on Apple platforms: langprefs.o and
+                    # setlocale.o call CFPreferencesCopyAppValue,
+                    # CFLocaleCopyPreferredLanguages, CFRelease and friends. The
+                    # ${_PythonFinder_PREFIX}_LIBRARIES branch further down already names
+                    # it; these imported-target branches did not, so anything linking
+                    # Python3::Module or ::Python got Intl without it. On macOS the
+                    # framework arrives by other means; on iOS nothing supplies it and
+                    # the link fails on those symbols (greenlet was the first to hit it).
+                    "-framework CoreFoundation"
                 )
                 set_property(TARGET ${_PythonFinder_PREFIX}::Python PROPERTY INTERFACE_LINK_LIBRARIES ${_PYTHON_INTERFACE_LIBS})
                 unset(_PYTHON_INTERFACE_LIBS)
@@ -141,6 +167,15 @@ if(_PythonFinder_WantLibs)
                 list(APPEND _PYTHON_INTERFACE_LIBS
                     Iconv::Iconv
                     "$<IF:$<CONFIG:Debug>,${Intl_LIBRARY_DEBUG},${Intl_LIBRARY_RELEASE}>"
+                    # Intl drags in CoreFoundation on Apple platforms: langprefs.o and
+                    # setlocale.o call CFPreferencesCopyAppValue,
+                    # CFLocaleCopyPreferredLanguages, CFRelease and friends. The
+                    # ${_PythonFinder_PREFIX}_LIBRARIES branch further down already names
+                    # it; these imported-target branches did not, so anything linking
+                    # Python3::Module or ::Python got Intl without it. On macOS the
+                    # framework arrives by other means; on iOS nothing supplies it and
+                    # the link fails on those symbols (greenlet was the first to hit it).
+                    "-framework CoreFoundation"
                 )
                 set_property(TARGET ${_PythonFinder_PREFIX}::Module PROPERTY INTERFACE_LINK_LIBRARIES ${_PYTHON_INTERFACE_LIBS})
                 unset(_PYTHON_INTERFACE_LIBS)

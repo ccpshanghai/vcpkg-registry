@@ -1,8 +1,8 @@
 vcpkg_from_git(
   OUT_SOURCE_PATH SOURCE_PATH
-  URL git@github.com:carbonengine/core.git
-  REF b8cbfd6daefe7bc00b1157e3e328efad34e1a239
-  HEAD_REF main
+  URL git@github.com:ccpshanghai/core.git
+  REF c8e50e0851897cdea0f2669a863f3616eb9356ab
+  HEAD_REF mobile-exp
 )
 
 vcpkg_check_features(OUT_FEATURE_OPTIONS FEATURE_OPTIONS
