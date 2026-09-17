@@ -1,14 +1,14 @@
 vcpkg_from_git(
   OUT_SOURCE_PATH SOURCE_PATH
-  URL git@github.com:carbonengine/blueexposure.git
-  REF c855175f5f261a301a12b63c0337e8eb8d92b081
+  URL git@github.com:ccpshanghai/blueexposure.git
+  REF 38708579cb7dc20e7d7b994b8265c53c7b941b59
   HEAD_REF main
-  # 38 redefinition errors on arm64-android, all from one cause: three places specialise for
-  # both int64_t and long, which are the same type under bionic on LP64. The guards assumed
-  # non-MSVC means long is distinct from int64_t -- true on Apple, false on Linux. Only the
-  # 64-bit Android case is excluded; MSVC, Apple and 32-bit Android keep their existing traits.
-  PATCHES
-    android-lp64-long-is-int64.patch
+  # Both Android fixes live in the fork's source now (ccpshanghai/blueexposure#1) instead of in
+  # PATCHES here: `long` and `int64_t` are the same type under bionic on LP64, which three traits
+  # specialisations did not expect, and three interfaces blue dynamic_casts to across shared
+  # objects needed key functions, because the NDK's libc++abi compares type_info by address. The
+  # second is ABI-shaped -- it adds a virtual -- which is precisely why it should not be a
+  # downstream patch: a consumer could otherwise build unpatched source against a patched header.
 )
 
 vcpkg_cmake_configure(
