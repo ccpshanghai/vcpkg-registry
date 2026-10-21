@@ -1,7 +1,7 @@
 {
   "name": "carbon-blue",
   "version-semver": "6.0.0",
-  "port-version": 4,
+  "port-version": 5,
   "description": "Central library providing the embedded Python interpreter, game loop, resource-loading and other functions",
   "dependencies": [
     {

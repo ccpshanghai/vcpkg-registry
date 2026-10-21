@@ -1,7 +1,7 @@
 vcpkg_from_git(
   OUT_SOURCE_PATH SOURCE_PATH
   URL git@github.com:ccpshanghai/blue.git
-  REF 9de531fbc61b20e540d8496c1ff22a74d623a559
+  REF 8dcd8cae279def008016bdb947ffc500d332e38e
   HEAD_REF main
 )
 
