@@ -4,17 +4,20 @@ Date: Thu, 28 May 2020 17:25:21 -0400
 Subject: [PATCH 1/7] static library
 
 builds the pythoncore as a static library instead of a DLL
+(rebased for 3.13: PC/pyconfig.h is now generated from PC/pyconfig.h.in)
 ---
- PC/pyconfig.h              | 9 +++++++++
- PCbuild/pythoncore.vcxproj | 4 ++--
- 2 files changed, 11 insertions(+), 2 deletions(-)
+ PC/pyconfig.h.in           | 12 ++++++++++++
+ PCbuild/pcbuild.proj       |  2 +-
+ PCbuild/pythoncore.vcxproj |  4 ++--
+ PCbuild/_freeze_module.vcxproj | 2 +-
+ Python/sysmodule.c         |  3 +++
+ 5 files changed, 19 insertions(+), 4 deletions(-)
 
-diff --git a/PC/pyconfig.h b/PC/pyconfig.h
+diff --git a/PC/pyconfig.h.in b/PC/pyconfig.h.in
 index d7d3cf081e..34269f0b75 100644
---- a/PC/pyconfig.h
-+++ b/PC/pyconfig.h
-@@ -251,6 +251,9 @@ typedef int pid_t;
- 
+--- a/PC/pyconfig.h.in
++++ b/PC/pyconfig.h.in
+@@ -300,5 +300,8 @@
  /* For Windows the Python core is in a DLL by default.  Test
  Py_NO_ENABLE_SHARED to find out.  Also support MS_NO_COREDLL for b/w compat */
 +#ifndef Py_NO_ENABLE_SHARED
@@ -23,8 +26,8 @@ index d7d3cf081e..34269f0b75 100644
  #if !defined(MS_NO_COREDLL) && !defined(Py_NO_ENABLE_SHARED)
  #       define Py_ENABLE_SHARED 1 /* standard symbol for shared library */
  #       define MS_COREDLL       /* deprecated old symbol */
-@@ -276,6 +277,15 @@ Py_NO_ENABLE_SHARED to find out.  Also support MS_NO_COREDLL for b/w compat */
- #                       endif /* _DEBUG */
+@@ -333,6 +336,15 @@
+ #                       endif /* Py_GIL_DISABLED */
  #               endif /* _MSC_VER */
  #       endif /* Py_BUILD_CORE */
 +#else
@@ -37,13 +40,13 @@ index d7d3cf081e..34269f0b75 100644
 +#           pragma comment(lib, "pathcch.lib")
 +#       endif /* Py_WINVER */
  #endif /* MS_COREDLL */
- 
+
  #ifdef MS_WIN64
 diff --git a/PCbuild/pcbuild.proj b/PCbuild/pcbuild.proj
 index 70c336a9d3..ba797e8afd 100644
 --- a/PCbuild/pcbuild.proj
 +++ b/PCbuild/pcbuild.proj
-@@ -45,7 +45,7 @@
+@@ -58,7 +58,7 @@
        <BuildInParallel>false</BuildInParallel>
      </Projects>
      <!-- python3.dll -->
@@ -65,16 +68,15 @@ index 2625d0293d..2f8bdaa931 100644
      <UseOfMfc>false</UseOfMfc>
    </PropertyGroup>
    <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
-@@ -102,7 +102,7 @@
+@@ -102,6 +102,6 @@
        <AdditionalOptions>/Zm200  %(AdditionalOptions)</AdditionalOptions>
        <AdditionalIncludeDirectories>$(PySourcePath)Modules\_hacl\include;$(PySourcePath)Modules\_hacl\internal;$(PySourcePath)Python;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
        <AdditionalIncludeDirectories Condition="$(IncludeExternals)">$(zlibDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
 -      <PreprocessorDefinitions>_USRDLL;Py_BUILD_CORE;Py_BUILD_CORE_BUILTIN;Py_ENABLE_SHARED;MS_DLL_ID="$(SysWinVer)";%(PreprocessorDefinitions)</PreprocessorDefinitions>
 +      <PreprocessorDefinitions>_USRDLL;Py_BUILD_CORE;Py_BUILD_CORE_BUILTIN;MS_DLL_ID="$(SysWinVer)";%(PreprocessorDefinitions)</PreprocessorDefinitions>
        <PreprocessorDefinitions Condition="$(IncludeExternals)">_Py_HAVE_ZLIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-     </ClCompile>
-     <Link>
-diff --git a/PCbuild/pythoncore.vcxproj b/PCbuild/pythoncore.vcxproj
+       <PreprocessorDefinitions Condition="'$(UseJIT)' == 'true'">_Py_JIT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+diff --git a/PCbuild/_freeze_module.vcxproj b/PCbuild/_freeze_module.vcxproj
 index 2625d0293d..2f8bdaa931 100644
 --- a/PCbuild/_freeze_module.vcxproj
 +++ b/PCbuild/_freeze_module.vcxproj
@@ -84,14 +86,14 @@ index 2625d0293d..2f8bdaa931 100644
      <ClCompile>
 -      <PreprocessorDefinitions>Py_NO_ENABLE_SHARED;Py_BUILD_CORE;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
 +      <PreprocessorDefinitions>Py_NO_ENABLE_SHARED;Py_BUILD_CORE;_CONSOLE;MS_DLL_ID="$(SysWinVer)";%(PreprocessorDefinitions)</PreprocessorDefinitions>
+       <AdditionalIncludeDirectories>$(IntDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
        <Optimization>Disabled</Optimization>
        <WholeProgramOptimization>false</WholeProgramOptimization>
-     </ClCompile>
 diff --git a/Python/sysmodule.c b/Python/sysmodule.c
 index ac49f7867a..f3583345ff 100644
 --- a/Python/sysmodule.c
 +++ b/Python/sysmodule.c
-@@ -2804,6 +2804,9 @@ _PySys_InitCore(PyThreadState *tstate, PyObject *sysdict
+@@ -3637,6 +3637,9 @@
  #ifdef MS_COREDLL
      SET_SYS("dllhandle", PyLong_FromVoidPtr(PyWin_DLLhModule));
      SET_SYS_FROM_STRING("winver", PyWin_DLLVersionString);
@@ -101,6 +103,3 @@ index ac49f7867a..f3583345ff 100644
  #endif
  #ifdef ABIFLAGS
      SET_SYS_FROM_STRING("abiflags", ABIFLAGS);
--- 
-2.28.0.windows.1
-

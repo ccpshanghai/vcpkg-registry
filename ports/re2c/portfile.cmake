@@ -8,5 +8,14 @@ vcpkg_from_github(
 
 vcpkg_cmake_configure(SOURCE_PATH "${SOURCE_PATH}")
 vcpkg_cmake_install()
+
+# re2c is only ever consumed as a host tool, so the binaries have to land in
+# tools/re2c/ -- vcpkg.cmake globs tools/* onto CMAKE_PROGRAM_PATH, and nothing puts
+# bin/ there. Without this, find_program(Re2c re2c) fails for every consumer whose host
+# triplet differs from its target, which is every mobile build. It succeeds when host and
+# target match only because the target tree's bin/ is already on CMAKE_PREFIX_PATH, which
+# is why this went unnoticed on desktop.
+vcpkg_copy_tools(TOOL_NAMES re2c re2go AUTO_CLEAN)
+
 vcpkg_cmake_config_fixup()
 vcpkg_install_copyright(FILE_LIST "${SOURCE_PATH}/LICENSE")
