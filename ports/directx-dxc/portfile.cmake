@@ -8,24 +8,76 @@ if (NOT VCPKG_LIBRARY_LINKAGE STREQUAL "dynamic")
 endif()
 
 if (VCPKG_TARGET_IS_OSX)
-    # Nothing to download: upstream ${DIRECTX_DXC_TAG} publishes Windows and Linux
-    # archives only. This branch installs a dxc built from source on this machine
-    # instead -- see vcpkg.json's $comment for why this port exists at all.
-    set(DXC_OSX_ROOT "$ENV{DXC_ROOT}")
-    if (DXC_OSX_ROOT STREQUAL "")
-        set(DXC_OSX_ROOT "$ENV{HOME}/Workspace/carbon/carbon-toolchain/dxc")
-    endif()
+    # Upstream ${DIRECTX_DXC_TAG} publishes Windows and Linux archives only, so on macOS
+    # this port builds the same tag from source -- see vcpkg.json's $comment for why this
+    # port exists at all. A GitHub archive carries no submodules, so the three DXC needs
+    # are fetched at the commits ${DIRECTX_DXC_TAG}'s gitlinks name and handed to its
+    # CMake by path. (`.gitmodules` also lists googletest, but the tag has no gitlink for
+    # it, and effcee/re2 are SPIRV-Tools' test dependencies; with tests off none is needed.)
+    vcpkg_from_github(
+        OUT_SOURCE_PATH SOURCE_PATH
+        REPO microsoft/DirectXShaderCompiler
+        REF ${DIRECTX_DXC_TAG}
+        SHA512 66137da630163828bea416cb2e336a52e425a43a9e57a805a0dc29efb02b62e31c924b6afd45fac954e3292ee2e77c64779a86ef01e774cc7e6c689b0975b9fd
+        HEAD_REF main
+    )
+    vcpkg_from_github(
+        OUT_SOURCE_PATH SPIRV_HEADERS_PATH
+        REPO KhronosGroup/SPIRV-Headers
+        REF 04f10f650d514df88b76d25e83db360142c7b174
+        SHA512 cae8cd179c9013068876908fecc1d158168310ad6ac250398a41f0f5206ceff6469e2aaeab9c820bce9d1b08950c725c89c46e94b89a692be9805432cf749396
+        HEAD_REF main
+    )
+    vcpkg_from_github(
+        OUT_SOURCE_PATH SPIRV_TOOLS_PATH
+        REPO KhronosGroup/SPIRV-Tools
+        REF fbe4f3ad913c44fe8700545f8ffe35d1382b7093
+        SHA512 e76e383d2e26c5d4953fa5863cc1973cb70a4a570f185ec2cb1bd2ad0a7c49c18dc5e687d8b41f49eb3a4e39c0b8ed960af65bd8cdc0b1fb34baf9e25bb7062b
+        HEAD_REF main
+    )
+    vcpkg_from_github(
+        OUT_SOURCE_PATH DIRECTX_HEADERS_PATH
+        REPO microsoft/DirectX-Headers
+        REF 980971e835876dc0cde415e8f9bc646e64667bf7
+        SHA512 a570068d3c25c68eba34a2653108e2019f888a7392a803f97da9a401713b14bf4235520f0adc37c2f6ffb27cfb118ca7bb0fc8e446b342a7393c9c64afd84ed8
+        HEAD_REF main
+    )
 
-    # The headers do not live under the install prefix: `ninja dxc` installs bin/ and
-    # lib/ and nothing else, and the release archives this port unpacks on the other two
-    # platforms have no macOS counterpart. So they are copied out of the SOURCE tree the
-    # dylib was built from. DXC_SOURCE_ROOT overrides; the default is the layout
-    # docs/HANDOFF-m6-macbook.md's dxc step produces.
-    set(DXC_OSX_SRC "$ENV{DXC_SOURCE_ROOT}")
-    if (DXC_OSX_SRC STREQUAL "")
-        get_filename_component(_dxc_toolchain "${DXC_OSX_ROOT}" DIRECTORY)
-        set(DXC_OSX_SRC "${_dxc_toolchain}/src/DirectXShaderCompiler")
-    endif()
+    vcpkg_find_acquire_program(PYTHON3)
+
+    # DXC's LLVM must be static: libdxcompiler.dylib is the one shared object it is meant
+    # to produce, with LLVM linked into it. The triplet's dynamic linkage would make
+    # vcpkg_cmake_configure pass BUILD_SHARED_LIBS=ON after OPTIONS, where an OFF of ours
+    # would lose, and turn every LLVM component into a dylib of its own.
+    set(VCPKG_LIBRARY_LINKAGE static)
+    # DXC does not build against the macOS 26.5 SDK without this (docs/HANDOFF-m6-macbook.md
+    # in carbon-trinity-mobile); vcpkg_cmake_configure wants the C flags defined alongside.
+    string(APPEND VCPKG_CXX_FLAGS " -Wno-invalid-specialization")
+    string(APPEND VCPKG_C_FLAGS "")
+
+    # The flags are docs/BuildingAndTestingDXC.rst's (the PredefinedParams cache script,
+    # SPIR-V on) with every test tree off, as the hand-built dxc this replaces was made.
+    vcpkg_cmake_configure(
+        SOURCE_PATH "${SOURCE_PATH}"
+        OPTIONS
+            -C "${SOURCE_PATH}/cmake/caches/PredefinedParams.cmake"
+            "-DPython3_EXECUTABLE=${PYTHON3}"
+            -DLLVM_ENABLE_ASSERTIONS=OFF
+            -DHLSL_INCLUDE_TESTS=OFF
+            -DLLVM_INCLUDE_TESTS=OFF
+            -DCLANG_INCLUDE_TESTS=OFF
+            -DSPIRV_BUILD_TESTS=OFF
+            -DENABLE_SPIRV_CODEGEN=ON
+            "-DDXC_SPIRV_HEADERS_DIR=${SPIRV_HEADERS_PATH}"
+            "-DDXC_SPIRV_TOOLS_DIR=${SPIRV_TOOLS_PATH}"
+            "-DDIRECTX_HEADER_INCLUDE_DIR=${DIRECTX_HEADERS_PATH}/include"
+    )
+    # The driver only: libdxcompiler is its dependency, and the `install` target would
+    # install DXC's whole LLVM.
+    vcpkg_cmake_build(TARGET dxc LOGFILE_BASE build-dxc)
+
+    set(DXC_OSX_BUILD "${CURRENT_BUILDTREES_DIR}/${TARGET_TRIPLET}-rel")
+    set(DXC_OSX_SRC "${SOURCE_PATH}")
 elseif (VCPKG_TARGET_IS_LINUX)
     vcpkg_download_distfile(ARCHIVE
         URLS "https://github.com/microsoft/DirectXShaderCompiler/releases/download/${DIRECTX_DXC_TAG}/linux_dxc_${DIRECTX_DXC_VERSION}.x86_64.tar.gz"
@@ -65,36 +117,8 @@ if (VCPKG_TARGET_IS_OSX)
   # d3dcommon.h includes come from. They are installed FLAT into include/directx-dxc/,
   # which is the one directory the generated config puts on the include path; the
   # quoted includes inside d3dcommon.h ("rpc.h", "OAIdl.h", ...) then resolve against
-  # their own directory, the way they do inside dxc's own build.
-  if (NOT EXISTS "${DXC_OSX_ROOT}/bin/dxc" OR NOT EXISTS "${DXC_OSX_ROOT}/lib/libdxcompiler.dylib")
-    message(FATAL_ERROR
-      "${PORT}: no macOS dxc found under '${DXC_OSX_ROOT}'.\n"
-      "Upstream ${DIRECTX_DXC_TAG} publishes Windows and Linux binaries only, so this "
-      "registry port installs a dxc built from source on this machine. Both of these "
-      "files must exist:\n"
-      "    ${DXC_OSX_ROOT}/bin/dxc\n"
-      "    ${DXC_OSX_ROOT}/lib/libdxcompiler.dylib\n"
-      "Point the DXC_ROOT environment variable at the prefix of such a build, or build "
-      "${DIRECTX_DXC_TAG} from https://github.com/microsoft/DirectXShaderCompiler and "
-      "install it there.")
-  endif()
-
-  foreach(_header
-      "${DXC_OSX_SRC}/include/dxc/dxcapi.h"
-      "${DXC_OSX_SRC}/include/dxc/WinAdapter.h"
-      "${DXC_OSX_SRC}/external/DirectX-Headers/include/directx/d3d12shader.h"
-      "${DXC_OSX_SRC}/external/DirectX-Headers/include/wsl/stubs/rpc.h")
-    if (NOT EXISTS "${_header}")
-      message(FATAL_ERROR
-        "${PORT}: '${_header}' is missing.\n"
-        "The macOS branch of this port copies dxc's headers out of the SOURCE tree the "
-        "dylib was built from, because a `ninja dxc` install prefix carries none. Keep "
-        "the checkout (with its submodules) beside the install prefix, or point "
-        "DXC_SOURCE_ROOT at it. Looked under:\n"
-        "    ${DXC_OSX_SRC}")
-    endif()
-  endforeach()
-
+  # their own directory, the way they do inside dxc's own build. A build of the `dxc`
+  # target puts no headers anywhere, so they come out of the sources the build used.
   file(INSTALL
     "${DXC_OSX_SRC}/include/dxc/dxcapi.h"
     "${DXC_OSX_SRC}/include/dxc/dxcerrors.h"
@@ -106,18 +130,18 @@ if (VCPKG_TARGET_IS_OSX)
   # carries ID3DBlob, ID3DInclude, D3D_SHADER_MACRO and every D3D_SIT_/D3D_SVT_ enum the
   # reflection code switches on.
   file(INSTALL
-    "${DXC_OSX_SRC}/external/DirectX-Headers/include/directx/d3d12shader.h"
-    "${DXC_OSX_SRC}/external/DirectX-Headers/include/directx/d3dcommon.h"
+    "${DIRECTX_HEADERS_PATH}/include/directx/d3d12shader.h"
+    "${DIRECTX_HEADERS_PATH}/include/directx/d3dcommon.h"
     DESTINATION "${CURRENT_PACKAGES_DIR}/include/${PORT}")
 
   # The four MIDL stubs d3dcommon.h includes unconditionally, plus winapifamily.h.
   # Each is a handful of lines; dxc puts the same directory on its own include path.
   file(INSTALL
-    "${DXC_OSX_SRC}/external/DirectX-Headers/include/wsl/stubs/rpc.h"
-    "${DXC_OSX_SRC}/external/DirectX-Headers/include/wsl/stubs/rpcndr.h"
-    "${DXC_OSX_SRC}/external/DirectX-Headers/include/wsl/stubs/OAIdl.h"
-    "${DXC_OSX_SRC}/external/DirectX-Headers/include/wsl/stubs/OCIdl.h"
-    "${DXC_OSX_SRC}/external/DirectX-Headers/include/wsl/stubs/winapifamily.h"
+    "${DIRECTX_HEADERS_PATH}/include/wsl/stubs/rpc.h"
+    "${DIRECTX_HEADERS_PATH}/include/wsl/stubs/rpcndr.h"
+    "${DIRECTX_HEADERS_PATH}/include/wsl/stubs/OAIdl.h"
+    "${DIRECTX_HEADERS_PATH}/include/wsl/stubs/OCIdl.h"
+    "${DIRECTX_HEADERS_PATH}/include/wsl/stubs/winapifamily.h"
     DESTINATION "${CURRENT_PACKAGES_DIR}/include/${PORT}")
 
   # The driver's rpath is @executable_path/../lib, so installed as
@@ -126,25 +150,29 @@ if (VCPKG_TARGET_IS_OSX)
   # alternative is to put the dylib beside the binary and add @executable_path to
   # the copy with `install_name_tool -add_rpath`, and rewriting an arm64 Mach-O's
   # load commands invalidates its code signature, after which the kernel SIGKILLs
-  # the binary ("Killed: 9") instead of merely warning. Nothing here modifies the
-  # build under ${DXC_OSX_ROOT}.
+  # the binary ("Killed: 9") instead of merely warning. DXC's own CMake builds with its
+  # install rpath (CMAKE_BUILD_WITH_INSTALL_RPATH), so the build tree's files are already
+  # the relocatable ones.
   file(INSTALL
-    "${DXC_OSX_ROOT}/lib/libdxcompiler.dylib"
+    "${DXC_OSX_BUILD}/lib/libdxcompiler.dylib"
     DESTINATION "${CURRENT_PACKAGES_DIR}/tools/lib")
 
   file(INSTALL
-    "${DXC_OSX_ROOT}/lib/libdxcompiler.dylib"
+    "${DXC_OSX_BUILD}/lib/libdxcompiler.dylib"
     DESTINATION "${CURRENT_PACKAGES_DIR}/lib")
 
   if(NOT DEFINED VCPKG_BUILD_TYPE)
     file(INSTALL
-      "${DXC_OSX_ROOT}/lib/libdxcompiler.dylib"
+      "${DXC_OSX_BUILD}/lib/libdxcompiler.dylib"
       DESTINATION "${CURRENT_PACKAGES_DIR}/debug/lib")
   endif()
 
+  # bin/dxc is a symlink to bin/dxc-3.7; install the file it names, as dxc.
+  file(REAL_PATH "${DXC_OSX_BUILD}/bin/dxc" _dxc_driver)
   file(INSTALL
-    "${DXC_OSX_ROOT}/bin/dxc"
+    "${_dxc_driver}"
     DESTINATION "${CURRENT_PACKAGES_DIR}/tools/${PORT}/"
+    RENAME dxc
     FILE_PERMISSIONS
         OWNER_READ OWNER_WRITE OWNER_EXECUTE
         GROUP_READ GROUP_EXECUTE

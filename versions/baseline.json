@@ -170,7 +170,7 @@
     },
     "directx-dxc": {
       "baseline": "2026-02-20",
-      "port-version": 2
+      "port-version": 3
     },
     "fxc": {
       "baseline": "10.1",
