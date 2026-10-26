@@ -5,6 +5,11 @@ vcpkg_from_git(
   HEAD_REF mobile-exp
 )
 
+# The git tree spells these Ccp* while CMakeLists.txt spells CCP*. Windows finds
+# them because its filesystem is case-insensitive. Linux does not.
+vcpkg_replace_string("${SOURCE_PATH}/CMakeLists.txt" "CCPDefines.cpp" "CcpDefines.cpp")
+vcpkg_replace_string("${SOURCE_PATH}/CMakeLists.txt" "CCPMemoryTrackerMutex.h" "CcpMemoryTrackerMutex.h")
+
 vcpkg_check_features(OUT_FEATURE_OPTIONS FEATURE_OPTIONS
     FEATURES
       documentation BUILD_DOCUMENTATION
