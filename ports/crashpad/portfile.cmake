@@ -110,6 +110,21 @@ if(CMAKE_HOST_WIN32)
 endif()
 
 if (VCPKG_TARGET_IS_OSX)
+    # mini_chromium defaults mac_deployment_target to "10.9", and the libc++ in the macOS 27
+    # SDK (Xcode 27) refuses that floor outright ("The selected platform is no longer supported
+    # by libc++", an #error). Take the triplet's deployment target, else 11.0, the first macOS
+    # that runs on arm64.
+    if (VCPKG_OSX_DEPLOYMENT_TARGET)
+        set(CRASHPAD_MAC_DEPLOYMENT_TARGET "${VCPKG_OSX_DEPLOYMENT_TARGET}")
+    else()
+        set(CRASHPAD_MAC_DEPLOYMENT_TARGET "11.0")
+    endif()
+    # The same SDK also deprecates APIs this 2021 snapshot still calls (SecKeychain, ...), and
+    # mini_chromium compiles with -Werror. Warnings stay visible; they just stop failing a host
+    # tool build. Verified on Xcode 27.2: client, util, base and crashpad_handler all link.
+    set(OPTIONS_DBG "${OPTIONS_DBG} mac_deployment_target=\"${CRASHPAD_MAC_DEPLOYMENT_TARGET}\" extra_cflags=\"-Wno-error\"")
+    set(OPTIONS_REL "${OPTIONS_REL} mac_deployment_target=\"${CRASHPAD_MAC_DEPLOYMENT_TARGET}\" extra_cflags=\"-Wno-error\"")
+
     # check whether we want to build a universal binary
     list(FIND VCPKG_TARGET_ARCHITECTURE arm64 FOUND_ARM64)
     list(FIND VCPKG_TARGET_ARCHITECTURE x86_64 FOUND_X64)
