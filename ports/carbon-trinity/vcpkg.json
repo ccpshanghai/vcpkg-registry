@@ -1,6 +1,6 @@
 {
   "name": "carbon-trinity",
-  "version": "7.0.1",
+  "version": "8.2.0",
   "port-version": 1,
   "description": "Graphics engine for the carbon game engine",
   "dependencies": [
