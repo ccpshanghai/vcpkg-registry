@@ -4,7 +4,7 @@
                  TARGETS Scheduler
                  EXPORT SchedulerTargets
                  CONFIGURATIONS ${CMAKE_CONFIGURATION_TYPES}
--                LIBRARY DESTINATION $<IF:$<PLATFORM_ID:Darwin>,lib,bin>/${CCP_PLATFORM}/${CCP_ARCHITECTURE}/${CCP_TOOLSET}/
+-                LIBRARY DESTINATION $<IF:$<PLATFORM_ID:Darwin,Linux>,lib,bin>/${CCP_PLATFORM}/${CCP_ARCHITECTURE}/${CCP_TOOLSET}/
 +                LIBRARY DESTINATION $<IF:$<PLATFORM_ID:Windows>,bin,lib>/${CCP_PLATFORM}/${CCP_ARCHITECTURE}/${CCP_TOOLSET}/
          )
          # Install rule for available public headers
@@ -13,7 +13,7 @@
                  TARGETS Scheduler
                  EXPORT SchedulerTargets
                  CONFIGURATIONS ${CMAKE_CONFIGURATION_TYPES}
--                LIBRARY DESTINATION $<IF:$<PLATFORM_ID:Darwin>,lib,bin>
+-                LIBRARY DESTINATION $<IF:$<PLATFORM_ID:Darwin,Linux>,lib,bin>
 +                LIBRARY DESTINATION $<IF:$<PLATFORM_ID:Windows>,bin,lib>
          )
          # Install rule to ensure that our runtime and linker files are in the expected, platform-specific folders

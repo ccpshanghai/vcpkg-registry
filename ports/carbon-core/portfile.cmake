@@ -1,13 +1,14 @@
 vcpkg_from_git(
   OUT_SOURCE_PATH SOURCE_PATH
-  URL git@github.com:ccpshanghai/core.git
-  REF c8e50e0851897cdea0f2669a863f3616eb9356ab
+  URL https://github.com/ccpshanghai/core.git
+  REF 98fd27862fe3a275ab5bac9eb7106389289d1f42
   HEAD_REF mobile-exp
 )
 
 vcpkg_check_features(OUT_FEATURE_OPTIONS FEATURE_OPTIONS
     FEATURES
-      documentation BUILD_DOCUMENTATION
+      telemetry   WITH_TELEMETRY
+      docs        BUILD_DOCUMENTATION
 )
 
 vcpkg_cmake_configure(

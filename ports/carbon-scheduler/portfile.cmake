@@ -1,15 +1,15 @@
 vcpkg_from_git(
   OUT_SOURCE_PATH SOURCE_PATH
-  URL git@github.com:carbonengine/scheduler.git
-  REF 75d6f124d86cd127b410e8350286dcb674882af0
+  URL https://github.com/carbonengine/scheduler.git
+  REF 5bd0a40ca8e899795e20b794abb0e6f479badade
   HEAD_REF main
-  # The install destination was $<IF:$<PLATFORM_ID:Darwin>,lib,bin>, so only macOS got lib/.
-  # iOS reports CMAKE_SYSTEM_NAME=iOS and Android reports Android, so both installed the
-  # Python module into bin/ -- and vcpkg then rewrote the exported config to
+  # The install destination is $<IF:$<PLATFORM_ID:Darwin,Linux>,lib,bin> (1.4.3 had only
+  # Darwin), so macOS and Linux get lib/ but iOS (CMAKE_SYSTEM_NAME=iOS) and Android install
+  # the Python module into bin/ -- and vcpkg then rewrote the exported config to
   # tools/carbon-scheduler/_scheduler.so while the file stayed in bin/, so every consumer died
   # in carbon-schedulerConfig.cmake on "references the file ... but this file does not exist".
-  # Naming platforms one at a time was the wrong shape: lib/ is the convention for every
-  # non-Windows target, so the condition is inverted instead. Fixes Linux for free.
+  # Naming platforms one at a time is the wrong shape: lib/ is the convention for every
+  # non-Windows target, so the condition is inverted instead. Patch rebased onto 1.6.0.
   PATCHES
     install-dir-by-platform.patch
 )
