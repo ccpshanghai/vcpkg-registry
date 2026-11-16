@@ -1,7 +1,7 @@
 vcpkg_from_git(
   OUT_SOURCE_PATH SOURCE_PATH
   URL git@github.com:ccpshanghai/trinity.git
-  REF 54c391967b4901b8c83c5d72a66e1dc11a985c65
+  REF 7a34d988d49fb04d6dfd29ff547ff9b29a5962de
 )
 
 # Setup the features
