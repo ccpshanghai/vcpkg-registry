@@ -1,7 +1,7 @@
 --- a/cmake/compilers/Clang.cmake
 +++ b/cmake/compilers/Clang.cmake
-@@ -70,6 +70,15 @@
-     set(TBB_LIB_LINK_FLAGS ${TBB_LIB_LINK_FLAGS} -Wl,-z,relro,-z,now)
+@@ -102,6 +102,15 @@
+     set(TBB_LIB_LINK_FLAGS ${TBB_LIB_LINK_FLAGS} -Wl,-z,relro,-z,now,-z,noexecstack)
  endif()
  
 +# The lin64 .def files keep a local: list of names that no longer exist in the

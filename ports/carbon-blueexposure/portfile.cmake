@@ -1,7 +1,7 @@
 vcpkg_from_git(
   OUT_SOURCE_PATH SOURCE_PATH
   URL git@github.com:ccpshanghai/blueexposure.git
-  REF 38708579cb7dc20e7d7b994b8265c53c7b941b59
+  REF 43826910575afeb9f3c002bcf72daa35aeb3daa3
   HEAD_REF main
   # Both Android fixes live in the fork's source now (ccpshanghai/blueexposure#1) instead of in
   # PATCHES here: `long` and `int64_t` are the same type under bionic on LP64, which three traits
