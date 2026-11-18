@@ -34,10 +34,13 @@ set(PATCHES
     0018-fix-sysconfig-include.patch
     0019-fix-ssl-linkage.patch
     0020-Py_NO_LINK_LIB.patch # Remove in 3.14 https://github.com/python/cpython/pull/19740
+    0021-ios-simulator-min-version.patch
     ccp_customizations/exefile-compatible-multiprocessing.patch
     ccp_customizations/posix-sysconfig-vars-none.patch
     ccp_customizations/relocatable-macos-libraries.patch
     ccp_customizations/skip-proactor-event-loop-tests.patch
+    # Must stay last: generated against the tree with every patch above applied.
+    ccp_customizations/ios-allow-non-framework.patch
 )
 
 if(VCPKG_LIBRARY_LINKAGE STREQUAL "static")
@@ -66,7 +69,7 @@ vcpkg_from_github(
     OUT_SOURCE_PATH SOURCE_PATH
     REPO python/cpython
     REF v${VERSION}
-    SHA512 0ca83685fe00d374857ce544eb10037f284a702b14f4cd5c22402b9fbeb557d6d4d23722eae3adbcff1208bf780a50c71146d8d5e3e8a65b84f50bcc5b6968c3
+    SHA512 91a91a6d50311eeac22d42a2bcb95d41b769f3c0539b04731b2c2e1c3200825874a39eb53f2d6410be082c2c099ceb452f67a61c236a22032aaba49dc2f9b2bf
     HEAD_REF master
     PATCHES ${PATCHES}
 )
@@ -106,13 +109,15 @@ if(VCPKG_TARGET_IS_WINDOWS)
         find_library(FFI_DEBUG NAMES ffi PATHS "${CURRENT_INSTALLED_DIR}/debug/lib" NO_DEFAULT_PATH)
         find_library(LZMA_RELEASE NAMES lzma PATHS "${CURRENT_INSTALLED_DIR}/lib" NO_DEFAULT_PATH)
         find_library(LZMA_DEBUG NAMES lzma PATHS "${CURRENT_INSTALLED_DIR}/debug/lib" NO_DEFAULT_PATH)
+        find_library(MPDECIMAL_RELEASE NAMES libmpdec PATHS "${CURRENT_INSTALLED_DIR}/lib" NO_DEFAULT_PATH)
+        find_library(MPDECIMAL_DEBUG NAMES libmpdec PATHS "${CURRENT_INSTALLED_DIR}/debug/lib" NO_DEFAULT_PATH)
         x_vcpkg_pkgconfig_get_modules(PREFIX PC_SQLITE3 MODULES sqlite3 LIBRARIES USE_MSVC_SYNTAX_ON_WINDOWS)
         separate_arguments(SQLITE3_LIBRARIES_DEBUG UNIX_COMMAND "${PC_SQLITE3_LIBRARIES_DEBUG}")
         separate_arguments(SQLITE3_LIBRARIES_RELEASE UNIX_COMMAND "${PC_SQLITE3_LIBRARIES_RELEASE}")
         find_library(SSL_RELEASE NAMES libssl PATHS "${CURRENT_INSTALLED_DIR}/lib" NO_DEFAULT_PATH)
         find_library(SSL_DEBUG NAMES libssl PATHS "${CURRENT_INSTALLED_DIR}/debug/lib" NO_DEFAULT_PATH)
-        list(APPEND add_libs_rel "${BZ2_RELEASE};${EXPAT_RELEASE};${FFI_RELEASE};${LZMA_RELEASE};${SQLITE3_LIBRARIES_RELEASE}")
-        list(APPEND add_libs_dbg "${BZ2_DEBUG};${EXPAT_DEBUG};${FFI_DEBUG};${LZMA_DEBUG};${SQLITE3_LIBRARIES_DEBUG}")
+        list(APPEND add_libs_rel "${BZ2_RELEASE};${EXPAT_RELEASE};${FFI_RELEASE};${LZMA_RELEASE};${MPDECIMAL_RELEASE};${SQLITE3_LIBRARIES_RELEASE}")
+        list(APPEND add_libs_dbg "${BZ2_DEBUG};${EXPAT_DEBUG};${FFI_DEBUG};${LZMA_DEBUG};${MPDECIMAL_DEBUG};${SQLITE3_LIBRARIES_DEBUG}")
     else()
         message(STATUS "WARNING: Extensions have been disabled. No C extension modules will be available.")
     endif()
@@ -121,7 +126,8 @@ if(VCPKG_TARGET_IS_WINDOWS)
     list(APPEND add_libs_rel "${ZLIB_RELEASE}")
     list(APPEND add_libs_dbg "${ZLIB_DEBUG}")
 
-    configure_file("${SOURCE_PATH}/PC/pyconfig.h" "${SOURCE_PATH}/PC/pyconfig.h")
+    # 3.13: PC/pyconfig.h no longer exists in the source tree; it is generated
+    # from PC/pyconfig.h.in into the PCbuild intermediate dir during the build.
     configure_file("${CMAKE_CURRENT_LIST_DIR}/python_vcpkg.props.in" "${SOURCE_PATH}/PCbuild/python_vcpkg.props")
     configure_file("${CMAKE_CURRENT_LIST_DIR}/openssl.props.in" "${SOURCE_PATH}/PCbuild/openssl.props")
     file(WRITE "${SOURCE_PATH}/PCbuild/libffi.props"
@@ -194,7 +200,13 @@ if(VCPKG_TARGET_IS_WINDOWS)
         file(COPY ${PYTHON_EXTENSIONS_DEBUG} DESTINATION "${CURRENT_PACKAGES_DIR}/debug/bin")
     endif()
 
-    file(COPY "${SOURCE_PATH}/Include/" "${SOURCE_PATH}/PC/pyconfig.h"
+    # 3.13: pyconfig.h is generated during the build; pick it out of the build tree
+    file(GLOB_RECURSE generated_pyconfig_h "${CURRENT_BUILDTREES_DIR}/${TARGET_TRIPLET}-rel/PCbuild/**/pyconfig.h")
+    if(NOT generated_pyconfig_h)
+        message(FATAL_ERROR "3.13 generated pyconfig.h not found under ${CURRENT_BUILDTREES_DIR}/${TARGET_TRIPLET}-rel/PCbuild")
+    endif()
+    list(GET generated_pyconfig_h 0 generated_pyconfig_h)
+    file(COPY "${SOURCE_PATH}/Include/" "${generated_pyconfig_h}"
         DESTINATION "${CURRENT_PACKAGES_DIR}/include/python${PYTHON_VERSION_MAJOR}.${PYTHON_VERSION_MINOR}"
         FILES_MATCHING PATTERN *.h
     )
@@ -268,8 +280,37 @@ else()
         list(APPEND OPTIONS "--with-universal-archs=universal2")
     endif()
 
+    if(VCPKG_TARGET_IS_IOS)
+        if(VCPKG_OSX_SYSROOT MATCHES "[Ss]imulator")
+            # The device and simulator triplets need different min-version flag families
+            # (0021-ios-simulator-min-version.patch makes configure honor IOS_MIN_VERSION_FLAG,
+            # and IPHONEOS_DEPLOYMENT_TARGET here pins the floor to the triplet's, not the
+            # configure default of 13.0). CPP must match the SDK too -- iphoneos -E on a
+            # simulator triplet makes configure's own probes disagree with the link line.
+            list(APPEND OPTIONS "CPP=xcrun --sdk iphonesimulator clang -target arm64-apple-ios${VCPKG_OSX_DEPLOYMENT_TARGET}-simulator -E")
+            list(APPEND OPTIONS "IOS_MIN_VERSION_FLAG=-mios-simulator-version-min")
+            list(APPEND OPTIONS "IPHONEOS_DEPLOYMENT_TARGET=${VCPKG_OSX_DEPLOYMENT_TARGET}")
+        else()
+            list(APPEND OPTIONS "CPP=xcrun --sdk iphoneos clang -target arm64-apple-ios${VCPKG_OSX_DEPLOYMENT_TARGET} -E")
+        endif()
+    endif()
+
+    # iOS needs these for the same reason macOS does, and VCPKG_TARGET_IS_OSX is false for
+    # iOS -- so without it here, configure finds libintl.h in the installed tree, enables
+    # gettext support in _localemodule.c, and then python.exe fails to link on
+    # _libintl_textdomain / _libintl_localeconv. libintl.a and libiconv.a are both present
+    # and built for arm64-ios in the closure; only the link flags were missing.
     if(VCPKG_TARGET_IS_OSX OR VCPKG_TARGET_IS_BSD)
         list(APPEND OPTIONS "LIBS=-liconv -lintl")
+    elseif(VCPKG_TARGET_IS_IOS)
+        # CoreFoundation is not optional here. libintl's Apple locale code (langprefs.o,
+        # setlocale.o, localename) calls CFPreferencesCopyAppValue,
+        # CFLocaleCopyPreferredLanguages, CFRelease and friends. CPython's own link gets
+        # away without naming it because LINKFORSHARED already carries
+        # -framework CoreFoundation on iOS -- but -lintl propagates to consumers through
+        # python3.pc and sysconfig, so downstream ports (greenlet was the first) link
+        # libintl with no CoreFoundation and fail on those symbols.
+        list(APPEND OPTIONS "LIBS=-liconv -lintl -framework CoreFoundation")
     endif()
 
     if("readline" IN_LIST FEATURES)
@@ -280,6 +321,22 @@ else()
 
     if(VCPKG_TARGET_IS_ANDROID)
         list(APPEND OPTIONS "--without-static-libpython" )
+        # --with-lto with clang makes configure look for llvm-ar as its own precious
+        # variable (AC_PATH_TOOL LLVM_AR); it does not consult AR, which vcpkg does set to
+        # the NDK llvm-ar. Darwin gets away with it because configure falls back to
+        # "xcrun ar" when the lookup fails, and Android has no such fallback -- it errors
+        # with "llvm-ar is required for a --with-lto build with clang". Located through
+        # ANDROID_NDK_HOME, which the arm64-android triplets already pass through, so the
+        # host prebuilt directory name does not have to be hardcoded.
+        # llvm-ar*, not llvm-ar: on a Windows host the NDK prebuilt is llvm-ar.exe, and
+        # the bare name matched nothing -- every arm64-android python3 build on a Windows
+        # host died here at configure. Unix hosts match the bare name as before.
+        file(GLOB _python_ndk_llvm_ar "$ENV{ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/*/bin/llvm-ar*")
+        if(NOT _python_ndk_llvm_ar)
+            message(FATAL_ERROR "Could not find llvm-ar under ANDROID_NDK_HOME=$ENV{ANDROID_NDK_HOME}")
+        endif()
+        list(GET _python_ndk_llvm_ar 0 _python_ndk_llvm_ar)
+        list(APPEND OPTIONS "LLVM_AR=${_python_ndk_llvm_ar}")
         list(APPEND VCPKG_CMAKE_CONFIGURE_OPTIONS "-DANDROID_NO_UNDEFINED=OFF")
         if(VCPKG_CROSSCOMPILING)
             # Cannot not run target executables during configure
@@ -295,7 +352,15 @@ else()
     # The version of the build Python must match the version of the cross compiled host Python.
     # https://docs.python.org/3/using/configure.html#cross-compiling-options
     if(VCPKG_CROSSCOMPILING)
-        set(_python_for_build "${CURRENT_HOST_INSTALLED_DIR}/tools/python3/python${PYTHON_VERSION_MAJOR}.${PYTHON_VERSION_MINOR}")
+        # The host package's interpreter is python.exe on a Windows host and
+        # python3.<minor> everywhere else; --with-build-python with the wrong name is
+        # "invalid or missing build python binary" at configure, right after the
+        # llvm-ar fix above got this far on a Windows host for the first time.
+        if(CMAKE_HOST_WIN32)
+            set(_python_for_build "${CURRENT_HOST_INSTALLED_DIR}/tools/python3/python.exe")
+        else()
+            set(_python_for_build "${CURRENT_HOST_INSTALLED_DIR}/tools/python3/python${PYTHON_VERSION_MAJOR}.${PYTHON_VERSION_MINOR}")
+        endif()
         list(APPEND OPTIONS "--with-build-python=${_python_for_build}")
     endif()
 

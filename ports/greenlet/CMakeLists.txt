@@ -48,7 +48,12 @@ install(FILES src/greenlet/__init__.py DESTINATION bin/python/greenlet/)
 
 if(WIN32)
     install(FILES $<TARGET_FILE_DIR:_greenlet>/_greenlet.pyd DESTINATION bin/)
-elseif(APPLE)
+else()
+    # Was elseif(APPLE), which installed nothing at all on Android: the module built
+    # correctly as _greenlet.so but never left the build tree, and greenletConfig.cmake
+    # then hit its FATAL_ERROR branch. cmake/CcpTargetConfigurations.cmake gives every
+    # non-Windows target PREFIX "" and SUFFIX ".so", so Apple, Android and Linux all
+    # produce the same lib/_greenlet.so layout.
     install(FILES $<TARGET_FILE_NAME:_greenlet>  DESTINATION lib/)
 endif()
 install(FILES greenletConfig.cmake DESTINATION ${CMAKE_INSTALL_PREFIX}/share/greenlet/)

@@ -1,7 +1,7 @@
 vcpkg_from_git(
   OUT_SOURCE_PATH SOURCE_PATH
   URL git@github.com:carbonengine/pdm-proto-wrapper.git
-  REF d08e220697daa1b17298c257a803da64dcbc64a9
+  REF ca3c4e650f9e4a4023409f98a225865b1dae71ef
   HEAD_REF master
 )
 

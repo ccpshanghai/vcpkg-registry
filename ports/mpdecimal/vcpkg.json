@@ -1,0 +1,19 @@
+{
+  "$comment": "This registry's own mpdecimal (a CMake build of libmpdec, for CPython 3.13's _decimal), kept over the default registry's autotools port. 4.0.1 since M4 of carbon-mobile-exp-v8-upgrade (2026-11-17: the version microsoft/vcpkg afa249f1 resolves), with the 4.0.0 port's two fixes in CMakeLists.txt unchanged (BUILD_LIBMPDEC for MSVC's dllimport, and only on MSVC because Apple and Android clang reject __declspec). Port-version 1 so its version string differs from the default registry's 4.0.1#0.",
+  "name": "mpdecimal",
+  "version": "4.0.1",
+  "port-version": 1,
+  "description": "Complete implementation of the General Decimal Arithmetic Specification",
+  "homepage": "https://www.bytereef.org/mpdecimal/",
+  "license": "BSD-2-Clause",
+  "dependencies": [
+    {
+      "name": "vcpkg-cmake",
+      "host": true
+    },
+    {
+      "name": "vcpkg-cmake-config",
+      "host": true
+    }
+  ]
+}
