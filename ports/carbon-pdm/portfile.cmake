@@ -1,7 +1,7 @@
 vcpkg_from_git(
   OUT_SOURCE_PATH SOURCE_PATH
   URL git@github.com:ccpshanghai/pdm.git
-  REF 777482cb841c30101cc4aecdad25bdf10d870cfe
+  REF 13d210d4fd57674b268828524aa87beb2e7c49b5
   HEAD_REF master
 )
 
