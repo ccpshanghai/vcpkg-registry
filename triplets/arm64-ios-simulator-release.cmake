@@ -8,7 +8,7 @@ set(VCPKG_CMAKE_SYSTEM_NAME iOS)
 set(VCPKG_OSX_ARCHITECTURES arm64)
 # Must match CMAKE_OSX_DEPLOYMENT_TARGET in arm64-ios-carbon.cmake, or ports and their
 # consumers are built against different floors.
-set(VCPKG_OSX_DEPLOYMENT_TARGET 26.0)
+set(VCPKG_OSX_DEPLOYMENT_TARGET 17.0)
 
 # Autotools ports cannot detect that this is a cross-compile without help. vcpkg-make
 # derives --host from VCPKG_TARGET_IS_IOS as "${TARGET_ARCH}-apple-darwin" and --build from

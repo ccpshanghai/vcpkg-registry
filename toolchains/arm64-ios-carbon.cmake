@@ -15,7 +15,7 @@ if (NOT _CCP_TOOLCHAIN_FILE_LOADED)
     set (CMAKE_INTERPROCEDURAL_OPTIMIZATION ON CACHE STRING "")
     # Must match VCPKG_OSX_DEPLOYMENT_TARGET in the arm64-ios-* triplets. Setting it in only
     # one of the two places builds the ports and their consumers against different floors.
-    set (CMAKE_OSX_DEPLOYMENT_TARGET 26.0 CACHE STRING "")
+    set (CMAKE_OSX_DEPLOYMENT_TARGET 17.0 CACHE STRING "")
 
     #[[
         - `CCP_PLATFORM` indicates the operating system a binary was built for

@@ -5,9 +5,9 @@ set(VCPKG_LIBRARY_LINKAGE static)
 set(VCPKG_BUILD_TYPE "release")
 
 set(VCPKG_CMAKE_SYSTEM_NAME Android)
-# minSdk 31 (Android 12). Reaches scripts/toolchains/android.cmake as
+# minSdk 33 (Android 13). Reaches scripts/toolchains/android.cmake as
 # ANDROID_NATIVE_API_LEVEL / ANDROID_PLATFORM.
-set(VCPKG_CMAKE_SYSTEM_VERSION 31)
+set(VCPKG_CMAKE_SYSTEM_VERSION 33)
 # openssl and curl are autotools ports and need this to cross-configure.
 set(VCPKG_MAKE_BUILD_TRIPLET "--host=aarch64-linux-android")
 

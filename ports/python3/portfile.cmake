@@ -321,6 +321,12 @@ else()
 
     if(VCPKG_TARGET_IS_ANDROID)
         list(APPEND OPTIONS "--without-static-libpython" )
+        # Bionic's PAGE_SIZE macro assumes 4 KB pages. NDK r28 and later switch it off by default
+        # for 16 KB page-size devices, but only through the NDK's CMake toolchain; an autotools
+        # build has to ask for that itself. Same flag as CPython's own Android build
+        # (Platforms/Android/android-env.sh on its main branch).
+        string(APPEND VCPKG_C_FLAGS " -D__BIONIC_NO_PAGE_SIZE_MACRO")
+        string(APPEND VCPKG_CXX_FLAGS " -D__BIONIC_NO_PAGE_SIZE_MACRO")
         # --with-lto with clang makes configure look for llvm-ar as its own precious
         # variable (AC_PATH_TOOL LLVM_AR); it does not consult AR, which vcpkg does set to
         # the NDK llvm-ar. Darwin gets away with it because configure falls back to
