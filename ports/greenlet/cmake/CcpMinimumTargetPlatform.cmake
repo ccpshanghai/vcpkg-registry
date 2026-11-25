@@ -3,7 +3,9 @@ Configures key CMake variables to be correct for the operating system ("platform
 
 *Note*: On macOS, this module should be included before the first call to `project()` or `enable_language()`.
 ]]
-if(APPLE)
+# macOS only: on iOS the triplet and the arm64-ios-carbon toolchain set the floor (17.0), and
+# forcing a macOS version here built _greenlet for iOS 14.0 (the arm64 simulator's lowest).
+if(APPLE AND NOT IOS)
     # Explicitly set the minimum macOS version we target; otherwise it defaults to whatever version
     # we are building on, but we want to stick to our policy of supporting the last three releases.
     set(CMAKE_OSX_DEPLOYMENT_TARGET 10.14 CACHE STRING "The minimum macOS version we target." FORCE)
