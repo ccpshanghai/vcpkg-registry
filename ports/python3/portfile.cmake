@@ -378,7 +378,16 @@ else()
         OPTIONS_RELEASE
             "vcpkg_rpath=${CURRENT_INSTALLED_DIR}/lib"
     )
-    vcpkg_make_install(TARGETS altinstall)
+    if(VCPKG_TARGET_IS_IOS)
+        # CPython's iOS install is `make install`: the framework structure, libinstall,
+        # inclinstall, sharedinstall and the framework headers -- no python executable, which
+        # altinstall's altbininstall would want. Serial, because frameworkinstallunversionedstructure
+        # clears include/ while inclinstall writes it; the build itself runs in parallel first.
+        vcpkg_make_install(TARGETS all)
+        vcpkg_make_install(TARGETS install DISABLE_PARALLEL)
+    else()
+        vcpkg_make_install(TARGETS altinstall)
+    endif()
 
     file(COPY "${CURRENT_PACKAGES_DIR}/tools/${PORT}/bin/" DESTINATION "${CURRENT_PACKAGES_DIR}/tools/${PORT}")
 
@@ -487,7 +496,7 @@ if (NOT VCPKG_TARGET_IS_WINDOWS)
     endif()
 endif()
 
-if(NOT VCPKG_TARGET_IS_WINDOWS)
+if(NOT VCPKG_TARGET_IS_WINDOWS AND NOT VCPKG_TARGET_IS_IOS)   # an iOS framework build has no executable
   file(COPY_FILE "${CURRENT_PACKAGES_DIR}/tools/python3/python3.${PYTHON_VERSION_MINOR}" "${CURRENT_PACKAGES_DIR}/tools/python3/python3")
 endif()
 
