@@ -301,6 +301,14 @@ else()
         endif()
     endif()
 
+    # Xcode 27's SDKs declare pipe2 and dup3, which 3.12's configure then finds by linking, but
+    # macOS 26 and iOS 17 do not have them at run time: os.pipe() called a NULL pipe2 and the host
+    # interpreter segfaulted in subprocess (prototype-python-runtime). 3.13's configure does not
+    # pick them up on Apple platforms; tell 3.12's the same.
+    if(VCPKG_TARGET_IS_OSX OR VCPKG_TARGET_IS_IOS)
+        list(APPEND OPTIONS "ac_cv_func_pipe2=no" "ac_cv_func_dup3=no")
+    endif()
+
     # gettext-libintl and libiconv are not dependencies on iOS and Android (technical route
     # section 12 conclusion 6, operating model 6.7: no LGPL libraries on mobile), so _locale
     # is built without gettext there.
