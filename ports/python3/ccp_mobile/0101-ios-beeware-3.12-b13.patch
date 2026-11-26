@@ -768,8 +768,43 @@ index 79e00f9..b37aedd 100755
  
  def main():
      import getopt
+diff --git a/Mac/Resources/app-store-compliance.patch b/Mac/Resources/app-store-compliance.patch
+new file mode 100644
+index 0000000..f4b7dec
+--- /dev/null
++++ b/Mac/Resources/app-store-compliance.patch
+@@ -0,0 +1,29 @@
++diff --git a/Lib/test/test_urlparse.py b/Lib/test/test_urlparse.py
++index d6c83a75c1c..19ed4e01091 100644
++--- a/Lib/test/test_urlparse.py
+++++ b/Lib/test/test_urlparse.py
++@@ -237,11 +237,6 @@ def test_roundtrips(self):
++               '','',''),
++              ('git+ssh', 'git@github.com','/user/project.git',
++               '', '')),
++-            ('itms-services://?action=download-manifest&url=https://example.com/app',
++-             ('itms-services', '', '', '',
++-              'action=download-manifest&url=https://example.com/app', ''),
++-             ('itms-services', '', '',
++-              'action=download-manifest&url=https://example.com/app', '')),
++             ('+scheme:path/to/file',
++              ('', '', '+scheme:path/to/file', '', '', ''),
++              ('', '', '+scheme:path/to/file', '', '')),
++diff --git a/Lib/urllib/parse.py b/Lib/urllib/parse.py
++index 8f724f907d4..148caf742c9 100644
++--- a/Lib/urllib/parse.py
+++++ b/Lib/urllib/parse.py
++@@ -59,7 +59,7 @@
++                'imap', 'wais', 'file', 'mms', 'https', 'shttp',
++                'snews', 'prospero', 'rtsp', 'rtsps', 'rtspu', 'rsync',
++                'svn', 'svn+ssh', 'sftp', 'nfs', 'git', 'git+ssh',
++-               'ws', 'wss', 'itms-services']
+++               'ws', 'wss']
++
++ uses_params = ['', 'ftp', 'hdl', 'prospero', 'http', 'imap',
++                'https', 'shttp', 'rtsp', 'rtsps', 'rtspu', 'sip',
 diff --git a/Makefile.pre.in b/Makefile.pre.in
-index d4e74e5..e8863e5 100644
+index d4e74e5..2aea065 100644
 --- a/Makefile.pre.in
 +++ b/Makefile.pre.in
 @@ -178,18 +178,29 @@ EXPORTSFROM=	@EXPORTSFROM@
@@ -1024,6 +1059,17 @@ index d4e74e5..e8863e5 100644
  	-rm -f python-config.py python-config
  
  # Make things extra clean, before making a distribution:
+@@ -2814,7 +2931,9 @@ Python/thread.o: @THREADHEADERS@ $(srcdir)/Python/condvar.h
+ 
+ # force rebuild when header file or module build flavor (static/shared) is changed
+ MODULE_DEPS_STATIC=Modules/config.c
+-MODULE_DEPS_SHARED=$(MODULE_DEPS_STATIC) $(EXPORTSYMS)
++# iOS (prototype-python-runtime): extension modules link with -framework Python, so they need
++# the framework binary first; CPython 3.13 adds the same dependency in configure.
++MODULE_DEPS_SHARED=$(MODULE_DEPS_STATIC) $(EXPORTSYMS) $(LDLIBRARY)
+ 
+ MODULE_CMATH_DEPS=$(srcdir)/Modules/_math.h
+ MODULE_MATH_DEPS=$(srcdir)/Modules/_math.h
 diff --git a/Modules/getpath.c b/Modules/getpath.c
 index 0a31000..83a2bc4 100644
 --- a/Modules/getpath.c
@@ -1050,6 +1096,179 @@ index 0a31000..83a2bc4 100644
      return _PyStatus_OK();
  }
 -
+diff --git a/Platforms/Apple/iOS/Resources/Info.plist.in b/Platforms/Apple/iOS/Resources/Info.plist.in
+new file mode 100644
+index 0000000..26ef7a9
+--- /dev/null
++++ b/Platforms/Apple/iOS/Resources/Info.plist.in
+@@ -0,0 +1,34 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<!DOCTYPE plist SYSTEM "file://localhost/System/Library/DTDs/PropertyList.dtd">
++<plist version="0.9">
++<dict>
++	<key>CFBundleDevelopmentRegion</key>
++	<string>en</string>
++	<key>CFBundleExecutable</key>
++	<string>Python</string>
++	<key>CFBundleGetInfoString</key>
++	<string>Python Runtime and Library</string>
++	<key>CFBundleIdentifier</key>
++	<string>@PYTHONFRAMEWORKIDENTIFIER@</string>
++	<key>CFBundleInfoDictionaryVersion</key>
++	<string>6.0</string>
++	<key>CFBundleName</key>
++	<string>Python</string>
++	<key>CFBundlePackageType</key>
++	<string>FMWK</string>
++	<key>CFBundleShortVersionString</key>
++	<string>%VERSION%</string>
++	<key>CFBundleLongVersionString</key>
++	<string>%VERSION%, (c) 2001-2024 Python Software Foundation.</string>
++	<key>CFBundleSignature</key>
++	<string>????</string>
++	<key>CFBundleVersion</key>
++	<string>%VERSION%</string>
++	<key>CFBundleSupportedPlatforms</key>
++	<array>
++		<string>iPhoneOS</string>
++	</array>
++	<key>MinimumOSVersion</key>
++	<string>@IPHONEOS_DEPLOYMENT_TARGET@</string>
++</dict>
++</plist>
+diff --git a/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-ar b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-ar
+new file mode 100755
+index 0000000..3cf3eb2
+--- /dev/null
++++ b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-ar
+@@ -0,0 +1,2 @@
++#!/bin/sh
++xcrun --sdk iphoneos${IOS_SDK_VERSION} ar "$@"
+diff --git a/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-clang b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-clang
+new file mode 100755
+index 0000000..f50d5b5
+--- /dev/null
++++ b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-clang
+@@ -0,0 +1,2 @@
++#!/bin/sh
++xcrun --sdk iphoneos${IOS_SDK_VERSION} clang -target arm64-apple-ios${IPHONEOS_DEPLOYMENT_TARGET} "$@"
+diff --git a/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-clang++ b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-clang++
+new file mode 100755
+index 0000000..0794731
+--- /dev/null
++++ b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-clang++
+@@ -0,0 +1,2 @@
++#!/bin/sh
++xcrun --sdk iphoneos${IOS_SDK_VERSION} clang++ -target arm64-apple-ios${IPHONEOS_DEPLOYMENT_TARGET} "$@"
+diff --git a/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-cpp b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-cpp
+new file mode 100755
+index 0000000..24fa150
+--- /dev/null
++++ b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-cpp
+@@ -0,0 +1,2 @@
++#!/bin/sh
++xcrun --sdk iphoneos${IOS_SDK_VERSION} clang -target arm64-apple-ios${IPHONEOS_DEPLOYMENT_TARGET} -E "$@"
+diff --git a/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-simulator-ar b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-simulator-ar
+new file mode 100755
+index 0000000..b836b6d
+--- /dev/null
++++ b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-simulator-ar
+@@ -0,0 +1,2 @@
++#!/bin/sh
++xcrun --sdk iphonesimulator${IOS_SDK_VERSION} ar "$@"
+diff --git a/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-simulator-clang b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-simulator-clang
+new file mode 100755
+index 0000000..4891a00
+--- /dev/null
++++ b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-simulator-clang
+@@ -0,0 +1,2 @@
++#!/bin/sh
++xcrun --sdk iphonesimulator${IOS_SDK_VERSION} clang -target arm64-apple-ios${IPHONEOS_DEPLOYMENT_TARGET}-simulator "$@"
+diff --git a/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-simulator-clang++ b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-simulator-clang++
+new file mode 100755
+index 0000000..58b2a5f
+--- /dev/null
++++ b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-simulator-clang++
+@@ -0,0 +1,2 @@
++#!/bin/sh
++xcrun --sdk iphonesimulator${IOS_SDK_VERSION} clang++ -target arm64-apple-ios${IPHONEOS_DEPLOYMENT_TARGET}-simulator "$@"
+diff --git a/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-simulator-cpp b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-simulator-cpp
+new file mode 100755
+index 0000000..c9df94e
+--- /dev/null
++++ b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-simulator-cpp
+@@ -0,0 +1,2 @@
++#!/bin/sh
++xcrun --sdk iphonesimulator${IOS_SDK_VERSION} clang -target arm64-apple-ios${IPHONEOS_DEPLOYMENT_TARGET}-simulator -E "$@"
+diff --git a/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-simulator-strip b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-simulator-strip
+new file mode 100755
+index 0000000..fd59d30
+--- /dev/null
++++ b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-simulator-strip
+@@ -0,0 +1,2 @@
++#!/bin/sh
++xcrun --sdk iphonesimulator${IOS_SDK_VERSION} strip -arch arm64 "$@"
+diff --git a/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-strip b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-strip
+new file mode 100755
+index 0000000..75e823a
+--- /dev/null
++++ b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-strip
+@@ -0,0 +1,2 @@
++#!/bin/sh
++xcrun --sdk iphoneos${IOS_SDK_VERSION} strip -arch arm64 "$@"
+diff --git a/Platforms/Apple/iOS/Resources/bin/x86_64-apple-ios-simulator-ar b/Platforms/Apple/iOS/Resources/bin/x86_64-apple-ios-simulator-ar
+new file mode 100755
+index 0000000..b836b6d
+--- /dev/null
++++ b/Platforms/Apple/iOS/Resources/bin/x86_64-apple-ios-simulator-ar
+@@ -0,0 +1,2 @@
++#!/bin/sh
++xcrun --sdk iphonesimulator${IOS_SDK_VERSION} ar "$@"
+diff --git a/Platforms/Apple/iOS/Resources/bin/x86_64-apple-ios-simulator-clang b/Platforms/Apple/iOS/Resources/bin/x86_64-apple-ios-simulator-clang
+new file mode 100755
+index 0000000..f4739a7
+--- /dev/null
++++ b/Platforms/Apple/iOS/Resources/bin/x86_64-apple-ios-simulator-clang
+@@ -0,0 +1,2 @@
++#!/bin/sh
++xcrun --sdk iphonesimulator${IOS_SDK_VERSION} clang -target x86_64-apple-ios${IPHONEOS_DEPLOYMENT_TARGET}-simulator "$@"
+diff --git a/Platforms/Apple/iOS/Resources/bin/x86_64-apple-ios-simulator-clang++ b/Platforms/Apple/iOS/Resources/bin/x86_64-apple-ios-simulator-clang++
+new file mode 100755
+index 0000000..c348ae4
+--- /dev/null
++++ b/Platforms/Apple/iOS/Resources/bin/x86_64-apple-ios-simulator-clang++
+@@ -0,0 +1,2 @@
++#!/bin/sh
++xcrun --sdk iphonesimulator${IOS_SDK_VERSION} clang++ -target x86_64-apple-ios${IPHONEOS_DEPLOYMENT_TARGET}-simulator "$@"
+diff --git a/Platforms/Apple/iOS/Resources/bin/x86_64-apple-ios-simulator-cpp b/Platforms/Apple/iOS/Resources/bin/x86_64-apple-ios-simulator-cpp
+new file mode 100755
+index 0000000..6d7f808
+--- /dev/null
++++ b/Platforms/Apple/iOS/Resources/bin/x86_64-apple-ios-simulator-cpp
+@@ -0,0 +1,2 @@
++#!/bin/sh
++xcrun --sdk iphonesimulator${IOS_SDK_VERSION} clang -target x86_64-apple-ios${IPHONEOS_DEPLOYMENT_TARGET}-simulator -E "$@"
+diff --git a/Platforms/Apple/iOS/Resources/bin/x86_64-apple-ios-simulator-strip b/Platforms/Apple/iOS/Resources/bin/x86_64-apple-ios-simulator-strip
+new file mode 100755
+index 0000000..c5cfb28
+--- /dev/null
++++ b/Platforms/Apple/iOS/Resources/bin/x86_64-apple-ios-simulator-strip
+@@ -0,0 +1,2 @@
++#!/bin/sh
++xcrun --sdk iphonesimulator${IOS_SDK_VERSION} strip -arch x86_64 "$@"
+diff --git a/Platforms/Apple/iOS/Resources/pyconfig.h b/Platforms/Apple/iOS/Resources/pyconfig.h
+new file mode 100644
+index 0000000..4acff2c
+--- /dev/null
++++ b/Platforms/Apple/iOS/Resources/pyconfig.h
+@@ -0,0 +1,7 @@
++#ifdef __arm64__
++#include "pyconfig-arm64.h"
++#endif
++
++#ifdef __x86_64__
++#include "pyconfig-x86_64.h"
++#endif
 diff --git a/Python/marshal.c b/Python/marshal.c
 index 3fc3f89..892debe 100644
 --- a/Python/marshal.c
@@ -3043,211 +3262,3 @@ index 6db95d9..ba921b2 100644
    [CYGWIN*], [PY_STDLIB_MOD_SET_NA([_scproxy], [nis])],
    [QNX*], [PY_STDLIB_MOD_SET_NA([_scproxy], [nis])],
    [FreeBSD*], [PY_STDLIB_MOD_SET_NA([_scproxy], [spwd])],
-diff --git a/Platforms/Apple/iOS/Resources/Info.plist.in b/Platforms/Apple/iOS/Resources/Info.plist.in
-new file mode 100644
-index 00000000000..26ef7a95de4
---- /dev/null
-+++ b/Platforms/Apple/iOS/Resources/Info.plist.in
-@@ -0,0 +1,34 @@
-+<?xml version="1.0" encoding="UTF-8"?>
-+<!DOCTYPE plist SYSTEM "file://localhost/System/Library/DTDs/PropertyList.dtd">
-+<plist version="0.9">
-+<dict>
-+	<key>CFBundleDevelopmentRegion</key>
-+	<string>en</string>
-+	<key>CFBundleExecutable</key>
-+	<string>Python</string>
-+	<key>CFBundleGetInfoString</key>
-+	<string>Python Runtime and Library</string>
-+	<key>CFBundleIdentifier</key>
-+	<string>@PYTHONFRAMEWORKIDENTIFIER@</string>
-+	<key>CFBundleInfoDictionaryVersion</key>
-+	<string>6.0</string>
-+	<key>CFBundleName</key>
-+	<string>Python</string>
-+	<key>CFBundlePackageType</key>
-+	<string>FMWK</string>
-+	<key>CFBundleShortVersionString</key>
-+	<string>%VERSION%</string>
-+	<key>CFBundleLongVersionString</key>
-+	<string>%VERSION%, (c) 2001-2024 Python Software Foundation.</string>
-+	<key>CFBundleSignature</key>
-+	<string>????</string>
-+	<key>CFBundleVersion</key>
-+	<string>%VERSION%</string>
-+	<key>CFBundleSupportedPlatforms</key>
-+	<array>
-+		<string>iPhoneOS</string>
-+	</array>
-+	<key>MinimumOSVersion</key>
-+	<string>@IPHONEOS_DEPLOYMENT_TARGET@</string>
-+</dict>
-+</plist>
-diff --git a/Platforms/Apple/iOS/Resources/pyconfig.h b/Platforms/Apple/iOS/Resources/pyconfig.h
-new file mode 100644
-index 00000000000..4acff2c6051
---- /dev/null
-+++ b/Platforms/Apple/iOS/Resources/pyconfig.h
-@@ -0,0 +1,7 @@
-+#ifdef __arm64__
-+#include "pyconfig-arm64.h"
-+#endif
-+
-+#ifdef __x86_64__
-+#include "pyconfig-x86_64.h"
-+#endif
-diff --git a/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-ar b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-ar
-new file mode 100755
-index 00000000000..3cf3eb21874
---- /dev/null
-+++ b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-ar
-@@ -0,0 +1,2 @@
-+#!/bin/sh
-+xcrun --sdk iphoneos${IOS_SDK_VERSION} ar "$@"
-diff --git a/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-clang b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-clang
-new file mode 100755
-index 00000000000..f50d5b5142f
---- /dev/null
-+++ b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-clang
-@@ -0,0 +1,2 @@
-+#!/bin/sh
-+xcrun --sdk iphoneos${IOS_SDK_VERSION} clang -target arm64-apple-ios${IPHONEOS_DEPLOYMENT_TARGET} "$@"
-diff --git a/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-clang++ b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-clang++
-new file mode 100755
-index 00000000000..0794731d7dc
---- /dev/null
-+++ b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-clang++
-@@ -0,0 +1,2 @@
-+#!/bin/sh
-+xcrun --sdk iphoneos${IOS_SDK_VERSION} clang++ -target arm64-apple-ios${IPHONEOS_DEPLOYMENT_TARGET} "$@"
-diff --git a/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-cpp b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-cpp
-new file mode 100755
-index 00000000000..24fa1506bab
---- /dev/null
-+++ b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-cpp
-@@ -0,0 +1,2 @@
-+#!/bin/sh
-+xcrun --sdk iphoneos${IOS_SDK_VERSION} clang -target arm64-apple-ios${IPHONEOS_DEPLOYMENT_TARGET} -E "$@"
-diff --git a/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-simulator-ar b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-simulator-ar
-new file mode 100755
-index 00000000000..b836b6db902
---- /dev/null
-+++ b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-simulator-ar
-@@ -0,0 +1,2 @@
-+#!/bin/sh
-+xcrun --sdk iphonesimulator${IOS_SDK_VERSION} ar "$@"
-diff --git a/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-simulator-clang b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-simulator-clang
-new file mode 100755
-index 00000000000..4891a00876e
---- /dev/null
-+++ b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-simulator-clang
-@@ -0,0 +1,2 @@
-+#!/bin/sh
-+xcrun --sdk iphonesimulator${IOS_SDK_VERSION} clang -target arm64-apple-ios${IPHONEOS_DEPLOYMENT_TARGET}-simulator "$@"
-diff --git a/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-simulator-clang++ b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-simulator-clang++
-new file mode 100755
-index 00000000000..58b2a5f6f18
---- /dev/null
-+++ b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-simulator-clang++
-@@ -0,0 +1,2 @@
-+#!/bin/sh
-+xcrun --sdk iphonesimulator${IOS_SDK_VERSION} clang++ -target arm64-apple-ios${IPHONEOS_DEPLOYMENT_TARGET}-simulator "$@"
-diff --git a/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-simulator-cpp b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-simulator-cpp
-new file mode 100755
-index 00000000000..c9df94e8b7c
---- /dev/null
-+++ b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-simulator-cpp
-@@ -0,0 +1,2 @@
-+#!/bin/sh
-+xcrun --sdk iphonesimulator${IOS_SDK_VERSION} clang -target arm64-apple-ios${IPHONEOS_DEPLOYMENT_TARGET}-simulator -E "$@"
-diff --git a/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-simulator-strip b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-simulator-strip
-new file mode 100755
-index 00000000000..fd59d309b73
---- /dev/null
-+++ b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-simulator-strip
-@@ -0,0 +1,2 @@
-+#!/bin/sh
-+xcrun --sdk iphonesimulator${IOS_SDK_VERSION} strip -arch arm64 "$@"
-diff --git a/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-strip b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-strip
-new file mode 100755
-index 00000000000..75e823a3d02
---- /dev/null
-+++ b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-strip
-@@ -0,0 +1,2 @@
-+#!/bin/sh
-+xcrun --sdk iphoneos${IOS_SDK_VERSION} strip -arch arm64 "$@"
-diff --git a/Platforms/Apple/iOS/Resources/bin/x86_64-apple-ios-simulator-ar b/Platforms/Apple/iOS/Resources/bin/x86_64-apple-ios-simulator-ar
-new file mode 100755
-index 00000000000..b836b6db902
---- /dev/null
-+++ b/Platforms/Apple/iOS/Resources/bin/x86_64-apple-ios-simulator-ar
-@@ -0,0 +1,2 @@
-+#!/bin/sh
-+xcrun --sdk iphonesimulator${IOS_SDK_VERSION} ar "$@"
-diff --git a/Platforms/Apple/iOS/Resources/bin/x86_64-apple-ios-simulator-clang b/Platforms/Apple/iOS/Resources/bin/x86_64-apple-ios-simulator-clang
-new file mode 100755
-index 00000000000..f4739a7b945
---- /dev/null
-+++ b/Platforms/Apple/iOS/Resources/bin/x86_64-apple-ios-simulator-clang
-@@ -0,0 +1,2 @@
-+#!/bin/sh
-+xcrun --sdk iphonesimulator${IOS_SDK_VERSION} clang -target x86_64-apple-ios${IPHONEOS_DEPLOYMENT_TARGET}-simulator "$@"
-diff --git a/Platforms/Apple/iOS/Resources/bin/x86_64-apple-ios-simulator-clang++ b/Platforms/Apple/iOS/Resources/bin/x86_64-apple-ios-simulator-clang++
-new file mode 100755
-index 00000000000..c348ae4c103
---- /dev/null
-+++ b/Platforms/Apple/iOS/Resources/bin/x86_64-apple-ios-simulator-clang++
-@@ -0,0 +1,2 @@
-+#!/bin/sh
-+xcrun --sdk iphonesimulator${IOS_SDK_VERSION} clang++ -target x86_64-apple-ios${IPHONEOS_DEPLOYMENT_TARGET}-simulator "$@"
-diff --git a/Platforms/Apple/iOS/Resources/bin/x86_64-apple-ios-simulator-cpp b/Platforms/Apple/iOS/Resources/bin/x86_64-apple-ios-simulator-cpp
-new file mode 100755
-index 00000000000..6d7f8084c9f
---- /dev/null
-+++ b/Platforms/Apple/iOS/Resources/bin/x86_64-apple-ios-simulator-cpp
-@@ -0,0 +1,2 @@
-+#!/bin/sh
-+xcrun --sdk iphonesimulator${IOS_SDK_VERSION} clang -target x86_64-apple-ios${IPHONEOS_DEPLOYMENT_TARGET}-simulator -E "$@"
-diff --git a/Platforms/Apple/iOS/Resources/bin/x86_64-apple-ios-simulator-strip b/Platforms/Apple/iOS/Resources/bin/x86_64-apple-ios-simulator-strip
-new file mode 100755
-index 00000000000..c5cfb289291
---- /dev/null
-+++ b/Platforms/Apple/iOS/Resources/bin/x86_64-apple-ios-simulator-strip
-@@ -0,0 +1,2 @@
-+#!/bin/sh
-+xcrun --sdk iphonesimulator${IOS_SDK_VERSION} strip -arch x86_64 "$@"
-diff --git a/Mac/Resources/app-store-compliance.patch b/Mac/Resources/app-store-compliance.patch
-new file mode 100644
-index 00000000000..f4b7decc01c
---- /dev/null
-+++ b/Mac/Resources/app-store-compliance.patch
-@@ -0,0 +1,29 @@
-+diff --git a/Lib/test/test_urlparse.py b/Lib/test/test_urlparse.py
-+index d6c83a75c1c..19ed4e01091 100644
-+--- a/Lib/test/test_urlparse.py
-++++ b/Lib/test/test_urlparse.py
-+@@ -237,11 +237,6 @@ def test_roundtrips(self):
-+               '','',''),
-+              ('git+ssh', 'git@github.com','/user/project.git',
-+               '', '')),
-+-            ('itms-services://?action=download-manifest&url=https://example.com/app',
-+-             ('itms-services', '', '', '',
-+-              'action=download-manifest&url=https://example.com/app', ''),
-+-             ('itms-services', '', '',
-+-              'action=download-manifest&url=https://example.com/app', '')),
-+             ('+scheme:path/to/file',
-+              ('', '', '+scheme:path/to/file', '', '', ''),
-+              ('', '', '+scheme:path/to/file', '', '')),
-+diff --git a/Lib/urllib/parse.py b/Lib/urllib/parse.py
-+index 8f724f907d4..148caf742c9 100644
-+--- a/Lib/urllib/parse.py
-++++ b/Lib/urllib/parse.py
-+@@ -59,7 +59,7 @@
-+                'imap', 'wais', 'file', 'mms', 'https', 'shttp',
-+                'snews', 'prospero', 'rtsp', 'rtsps', 'rtspu', 'rsync',
-+                'svn', 'svn+ssh', 'sftp', 'nfs', 'git', 'git+ssh',
-+-               'ws', 'wss', 'itms-services']
-++               'ws', 'wss']
-+
-+ uses_params = ['', 'ftp', 'hdl', 'prospero', 'http', 'imap',
-+                'https', 'shttp', 'rtsp', 'rtsps', 'rtspu', 'sip',

@@ -9,7 +9,7 @@ mobile branches of `portfile.cmake` and the mobile platform filter on `gettext-l
 
 | Patch | Target | Bytes | Source | License |
 | --- | --- | --- | --- | --- |
-| `0101-ios-beeware-3.12-b13.patch` | iOS | 118019 | BeeWare [Python-Apple-support](https://github.com/beeware/Python-Apple-support) tag `3.12-b13` (`5b93bc2`), `patch/Python/Python.patch` (514046 bytes), filtered | Repository MIT; the patch changes CPython, PSF-2.0 |
+| `0101-ios-beeware-3.12-b13.patch` | iOS | 118474 | BeeWare [Python-Apple-support](https://github.com/beeware/Python-Apple-support) tag `3.12-b13` (`5b93bc2`), `patch/Python/Python.patch` (514046 bytes), filtered | Repository MIT; the patch changes CPython, PSF-2.0 |
 | `0102-android-chaquopy-3.12-soname-bldlibrary.patch` | Android | 3053 | Derived from [Chaquopy](https://github.com/chaquo/chaquopy) `main` (`9a7be2e`), `target/python/patches/soname.patch` and `bldlibrary.patch` | MIT; changes CPython, PSF-2.0 |
 
 ## How they were made
@@ -19,7 +19,7 @@ mobile branches of `portfile.cmake` and the mobile platform filter on `gettext-l
 - Kept: `configure.ac`, `config.sub`, `Makefile.pre.in`, the non-test `Lib/` files (`_apple_support`, `_ios_support`, `importlib`'s `AppleFrameworkLoader`, `platform`, `site`, `sysconfig` and others), `Python/` (`pylifecycle.c`: stdout and stderr to the unified log), `Modules/getpath.c`, `Platforms/Apple/iOS/Resources/` (the framework's `Info.plist.in`, `pyconfig.h`, and the compiler wrappers that `make install` copies into `bin/`), and `Mac/Resources/app-store-compliance.patch`.
 - Dropped: the generated `configure`, because the port's `AUTORECONF` regenerates it. Also the iOS testbed, `Lib/test/`, `Doc/`, `Misc/`, and the tvOS and watchOS resources.
 
-The filtered patch was then applied with `git apply -3` on top of the upstream port's patches. One conflict, in `Makefile.pre.in`'s `libpython$(LDVERSION).dylib` rule against `relocatable-macos-libraries.patch`, was resolved: it keeps the `@executable_path` install name and drops `-Wl,-single_module`, as BeeWare does. The patch is the diff of that tree.
+The filtered patch was then applied with `git apply -3` on top of the upstream port's patches. One conflict, in `Makefile.pre.in`'s `libpython$(LDVERSION).dylib` rule against `relocatable-macos-libraries.patch`, was resolved: it keeps the `@executable_path` install name and drops `-Wl,-single_module`, as BeeWare does. One line was added that BeeWare does not have: `MODULE_DEPS_SHARED` includes `$(LDLIBRARY)` (the framework binary), as CPython 3.13 does, because the stdlib's extension modules link with `-framework Python` and a parallel `make` otherwise links them before the framework exists (`ld: framework 'Python' not found`). The patch is the diff of that tree.
 
 **0102.** Chaquopy's two 3.12 patches change the generated `configure`. The port regenerates `configure`, so the same changes are rewritten onto `configure.ac`:
 
