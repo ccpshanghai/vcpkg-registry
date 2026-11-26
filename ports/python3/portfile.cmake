@@ -68,7 +68,6 @@ endif()
 if(VCPKG_TARGET_IS_IOS)
     list(APPEND PATCHES
         ccp_mobile/0101-ios-beeware-3.12-b13.patch
-        ccp_mobile/0103-ios-app-store-compliance.patch
     )
 elseif(VCPKG_TARGET_IS_ANDROID)
     list(APPEND PATCHES ccp_mobile/0102-android-chaquopy-3.12-soname-bldlibrary.patch)
@@ -361,9 +360,16 @@ else()
         list(APPEND OPTIONS "--with-build-python=${_python_for_build}")
     endif()
 
+    # vcpkg-make adds --enable-shared for a dynamic triplet; the iOS framework build refuses it
+    # next to --enable-framework ("use only --enable-framework instead").
+    set(_python_default_options_exclude "")
+    if(VCPKG_TARGET_IS_IOS)
+        set(_python_default_options_exclude "^--enable-shared$")
+    endif()
     vcpkg_make_configure(
         SOURCE_PATH "${SOURCE_PATH}"
         AUTORECONF
+        DEFAULT_OPTIONS_EXCLUDE "${_python_default_options_exclude}"
         OPTIONS
             ${OPTIONS}
         OPTIONS_DEBUG
