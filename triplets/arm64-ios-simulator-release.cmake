@@ -49,8 +49,11 @@ if (PORT MATCHES "curl")
     set(VCPKG_LIBRARY_LINKAGE static)
 endif ()
 
+# One OpenSSL and one libuv per process, as shared libraries that CPython's _ssl and
+# _hashlib, carbon-io's modules and curl all link (technical route section 3 conclusion 2;
+# prototype-python-runtime). They were static, so each consumer carried its own copy.
 if (PORT MATCHES "openssl")
-    set(VCPKG_LIBRARY_LINKAGE static)
+    set(VCPKG_LIBRARY_LINKAGE dynamic)
 endif ()
 
 if (PORT MATCHES "protobuf")
@@ -62,6 +65,7 @@ if (PORT MATCHES "zlib")
 endif ()
 
 if (PORT MATCHES "libuv")
+    set(VCPKG_LIBRARY_LINKAGE dynamic)
     list(APPEND VCPKG_CMAKE_CONFIGURE_OPTIONS "-DBUILD_TESTING=OFF")
 endif()
 

@@ -133,7 +133,9 @@ if(_PythonFinder_WantLibs)
             endif()
         endif()
 
-        if(APPLE)
+        # iOS links neither: the python3 port drops gettext-libintl and libiconv on iOS and
+        # Android (prototype-python-runtime; technical route section 12 conclusion 6).
+        if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
             find_package(Iconv)
             find_package(Intl)
             if(TARGET ${_PythonFinder_PREFIX}::Python)

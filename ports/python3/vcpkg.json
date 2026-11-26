@@ -1,7 +1,7 @@
 {
   "name": "python3",
-  "version": "3.13.15",
-  "port-version": 3,
+  "version": "3.12.16",
+  "port-version": 1,
   "description": "The Python programming language",
   "homepage": "https://github.com/python/cpython",
   "license": "Python-2.0",
@@ -9,11 +9,11 @@
   "dependencies": [
     {
       "name": "gettext-libintl",
-      "platform": "!windows"
+      "platform": "!windows & !android & !ios"
     },
     {
       "name": "libiconv",
-      "platform": "!windows"
+      "platform": "!windows & !android & !ios"
     },
     {
       "name": "libuuid",
@@ -66,7 +66,11 @@
           "name": "expat",
           "default-features": false
         },
-        "libb2",
+        {
+          "name": "libb2",
+          "default-features": false,
+          "platform": "!windows"
+        },
         {
           "name": "libffi",
           "default-features": false
@@ -74,10 +78,6 @@
         {
           "name": "liblzma",
           "default-features": false
-        },
-        {
-          "name": "mpdecimal",
-          "version>=": "4.0.0"
         },
         {
           "name": "openssl",
