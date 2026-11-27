@@ -4,8 +4,9 @@ The port is upstream carbonengine's `python3` port (CPython 3.12.16). CPython 3.
 official iOS or Android support: PEP 730 (iOS) and PEP 738 (Android) land in 3.13. These patches
 add it. `portfile.cmake` applies them after every upstream and `ccp_customizations` patch, and
 only for the target they serve. Everything else in the port matches upstream, apart from the
-mobile branches of `portfile.cmake` and the mobile platform filter on `gettext-libintl` and
-`libiconv` in `vcpkg.json`.
+mobile branches of `portfile.cmake`, the mobile platform filter on `gettext-libintl` and
+`libiconv` in `vcpkg.json`, and two mobile changes in `vcpkg-cmake-wrapper.cmake`: when
+cross-compiling, `FindPython` runs the host triplet's interpreter, and iOS links no Intl.
 
 | Patch | Target | Bytes | Source | License |
 | --- | --- | --- | --- | --- |
