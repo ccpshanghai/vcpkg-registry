@@ -47,8 +47,11 @@ if (PORT MATCHES "curl")
     set(VCPKG_LIBRARY_LINKAGE static)
 endif ()
 
+# One OpenSSL and one libuv per process, as shared libraries that CPython's _ssl and
+# _hashlib, carbon-io's modules and curl all link (technical route section 3 conclusion 2;
+# prototype-python-runtime). They were static, so each consumer carried its own copy.
 if (PORT MATCHES "openssl")
-    set(VCPKG_LIBRARY_LINKAGE static)
+    set(VCPKG_LIBRARY_LINKAGE dynamic)
 endif ()
 
 if (PORT MATCHES "protobuf")
@@ -63,7 +66,7 @@ endif ()
 # block: a static libpython is a whole private interpreter, and blue.so, _trinity_vulkan.so
 # and every Python-imported carbon .so would each get their own. On Android the failure is
 # the one iOS measured ("initialization of X did not return an extension module"), and
-# the app shell's payload contract requires libpython3.13.so by name (M6 second-half spec §5).
+# the app shell's payload contract requires libpython3.<minor>.so by name (M6 second-half spec §5).
 if (PORT MATCHES "^python3$")
     set(VCPKG_LIBRARY_LINKAGE dynamic)
 endif ()
@@ -78,6 +81,7 @@ if (PORT MATCHES "^tbb$")
 endif ()
 
 if (PORT MATCHES "libuv")
+    set(VCPKG_LIBRARY_LINKAGE dynamic)
     list(APPEND VCPKG_CMAKE_CONFIGURE_OPTIONS "-DBUILD_TESTING=OFF")
 endif()
 

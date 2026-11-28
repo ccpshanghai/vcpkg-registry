@@ -68,7 +68,7 @@ if(_PythonFinder_WantLibs)
 
     if(_PythonFinder_WantInterp)
         # FindPython *runs* the interpreter to read its version, so when cross-compiling the
-        # one in the target tree is useless: <target>/tools/python3/python3.13 is, for
+        # one in the target tree is useless: <target>/tools/python3/python3.X is, for
         # arm64-ios, a Mach-O iOS executable, and find_package fails with
         #   Could NOT find Python3 (missing: Interpreter) ... Cannot run the interpreter
         # carbon-scheduler and carbon-io both hit this. Look in the host triplet's tools tree
@@ -133,7 +133,9 @@ if(_PythonFinder_WantLibs)
             endif()
         endif()
 
-        if(APPLE)
+        # iOS links neither: the python3 port drops gettext-libintl and libiconv on iOS and
+        # Android (prototype-python-runtime; technical route section 12 conclusion 6).
+        if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
             find_package(Iconv)
             find_package(Intl)
             if(TARGET ${_PythonFinder_PREFIX}::Python)
@@ -145,15 +147,6 @@ if(_PythonFinder_WantLibs)
                 list(APPEND _PYTHON_INTERFACE_LIBS
                     Iconv::Iconv
                     "$<IF:$<CONFIG:Debug>,${Intl_LIBRARY_DEBUG},${Intl_LIBRARY_RELEASE}>"
-                    # Intl drags in CoreFoundation on Apple platforms: langprefs.o and
-                    # setlocale.o call CFPreferencesCopyAppValue,
-                    # CFLocaleCopyPreferredLanguages, CFRelease and friends. The
-                    # ${_PythonFinder_PREFIX}_LIBRARIES branch further down already names
-                    # it; these imported-target branches did not, so anything linking
-                    # Python3::Module or ::Python got Intl without it. On macOS the
-                    # framework arrives by other means; on iOS nothing supplies it and
-                    # the link fails on those symbols (greenlet was the first to hit it).
-                    "-framework CoreFoundation"
                 )
                 set_property(TARGET ${_PythonFinder_PREFIX}::Python PROPERTY INTERFACE_LINK_LIBRARIES ${_PYTHON_INTERFACE_LIBS})
                 unset(_PYTHON_INTERFACE_LIBS)
@@ -167,15 +160,6 @@ if(_PythonFinder_WantLibs)
                 list(APPEND _PYTHON_INTERFACE_LIBS
                     Iconv::Iconv
                     "$<IF:$<CONFIG:Debug>,${Intl_LIBRARY_DEBUG},${Intl_LIBRARY_RELEASE}>"
-                    # Intl drags in CoreFoundation on Apple platforms: langprefs.o and
-                    # setlocale.o call CFPreferencesCopyAppValue,
-                    # CFLocaleCopyPreferredLanguages, CFRelease and friends. The
-                    # ${_PythonFinder_PREFIX}_LIBRARIES branch further down already names
-                    # it; these imported-target branches did not, so anything linking
-                    # Python3::Module or ::Python got Intl without it. On macOS the
-                    # framework arrives by other means; on iOS nothing supplies it and
-                    # the link fails on those symbols (greenlet was the first to hit it).
-                    "-framework CoreFoundation"
                 )
                 set_property(TARGET ${_PythonFinder_PREFIX}::Module PROPERTY INTERFACE_LINK_LIBRARIES ${_PYTHON_INTERFACE_LIBS})
                 unset(_PYTHON_INTERFACE_LIBS)

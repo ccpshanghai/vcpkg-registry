@@ -1,13 +1,14 @@
 set(PATCHES
   patches/delete_setup_py.patch
+  patches/fix_test_extention_importing.patch
   patches/non_local_greenlet_import.patch
-  patches/greenlet-3.1.1-v141-no-designated-initializers.patch
+  patches/tests_remove_dir_local_imports.patch
 )
 
 vcpkg_from_git(
   OUT_SOURCE_PATH SOURCE_PATH
-  URL https://github.com/python-greenlet/greenlet.git
-  REF 7770a7aa1d4b44e30a9bec28c348a80d04d4c155 # TAG 3.1.1
+  URL https://github.com/carbonengine/greenlet.git
+  REF ea4bc2776c75429a577e539389fee40ad9e46707 # TAG 3.0.3
   HEAD_REF master
   PATCHES ${PATCHES}
 )

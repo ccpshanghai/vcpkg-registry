@@ -18,7 +18,7 @@ vcpkg_from_git(
 # unconditionally, but every use of Python3_EXECUTABLE sits behind BUILD_TESTING or
 # BUILD_DOCUMENTATION -- both switched off just below. When cross-compiling, vcpkg's
 # FindPython wrapper points the Interpreter at the *target* tree, and
-# `<target>/tools/python3/python3.13` is a Mach-O iOS executable: CMake runs it to read its
+# `<target>/tools/python3/python3.<minor>` is a Mach-O iOS executable: CMake runs it to read its
 # version and fails with "Cannot run the interpreter". Hand it the host triplet's
 # interpreter instead -- the same one CPython's own cross-build uses via
 # --with-build-python. It satisfies the REQUIRED component and is never invoked here.
@@ -28,7 +28,7 @@ vcpkg_from_git(
 set(_scheduler_python_option "")
 if(VCPKG_CROSSCOMPILING)
   find_program(_scheduler_host_python3
-    NAMES python3.13 python3 python
+    NAMES python3 python
     PATHS "${CURRENT_HOST_INSTALLED_DIR}/tools/python3"
     NO_DEFAULT_PATH REQUIRED
   )

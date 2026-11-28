@@ -34,13 +34,10 @@ set(PATCHES
     0018-fix-sysconfig-include.patch
     0019-fix-ssl-linkage.patch
     0020-Py_NO_LINK_LIB.patch # Remove in 3.14 https://github.com/python/cpython/pull/19740
-    0021-ios-simulator-min-version.patch
     ccp_customizations/exefile-compatible-multiprocessing.patch
     ccp_customizations/posix-sysconfig-vars-none.patch
     ccp_customizations/relocatable-macos-libraries.patch
     ccp_customizations/skip-proactor-event-loop-tests.patch
-    # Must stay last: generated against the tree with every patch above applied.
-    ccp_customizations/ios-allow-non-framework.patch
 )
 
 if(VCPKG_LIBRARY_LINKAGE STREQUAL "static")
@@ -65,11 +62,22 @@ if(VCPKG_TARGET_IS_WINDOWS)
     endif()
 endif()
 
+# ccpshanghai fork only: the mobile overlay for CPython 3.12, which has no official iOS or
+# Android support (PEP 730 and 738 land in 3.13). See ccp_mobile/README.md for where each
+# patch comes from. Applied last, after every upstream and ccp_customizations patch.
+if(VCPKG_TARGET_IS_IOS)
+    list(APPEND PATCHES
+        ccp_mobile/0101-ios-beeware-3.12-b13.patch
+    )
+elseif(VCPKG_TARGET_IS_ANDROID)
+    list(APPEND PATCHES ccp_mobile/0102-android-chaquopy-3.12-soname-bldlibrary.patch)
+endif()
+
 vcpkg_from_github(
     OUT_SOURCE_PATH SOURCE_PATH
     REPO python/cpython
     REF v${VERSION}
-    SHA512 91a91a6d50311eeac22d42a2bcb95d41b769f3c0539b04731b2c2e1c3200825874a39eb53f2d6410be082c2c099ceb452f67a61c236a22032aaba49dc2f9b2bf
+    SHA512 cca2ba1ffb7a93d6d004ba910a6377f958c0bc07a50ba484405305852c538b53e4ce3373ae735630181f9626069e519d4f49a9a888c006ef76957c99d5afa253
     HEAD_REF master
     PATCHES ${PATCHES}
 )
@@ -109,15 +117,13 @@ if(VCPKG_TARGET_IS_WINDOWS)
         find_library(FFI_DEBUG NAMES ffi PATHS "${CURRENT_INSTALLED_DIR}/debug/lib" NO_DEFAULT_PATH)
         find_library(LZMA_RELEASE NAMES lzma PATHS "${CURRENT_INSTALLED_DIR}/lib" NO_DEFAULT_PATH)
         find_library(LZMA_DEBUG NAMES lzma PATHS "${CURRENT_INSTALLED_DIR}/debug/lib" NO_DEFAULT_PATH)
-        find_library(MPDECIMAL_RELEASE NAMES libmpdec PATHS "${CURRENT_INSTALLED_DIR}/lib" NO_DEFAULT_PATH)
-        find_library(MPDECIMAL_DEBUG NAMES libmpdec PATHS "${CURRENT_INSTALLED_DIR}/debug/lib" NO_DEFAULT_PATH)
         x_vcpkg_pkgconfig_get_modules(PREFIX PC_SQLITE3 MODULES sqlite3 LIBRARIES USE_MSVC_SYNTAX_ON_WINDOWS)
         separate_arguments(SQLITE3_LIBRARIES_DEBUG UNIX_COMMAND "${PC_SQLITE3_LIBRARIES_DEBUG}")
         separate_arguments(SQLITE3_LIBRARIES_RELEASE UNIX_COMMAND "${PC_SQLITE3_LIBRARIES_RELEASE}")
         find_library(SSL_RELEASE NAMES libssl PATHS "${CURRENT_INSTALLED_DIR}/lib" NO_DEFAULT_PATH)
         find_library(SSL_DEBUG NAMES libssl PATHS "${CURRENT_INSTALLED_DIR}/debug/lib" NO_DEFAULT_PATH)
-        list(APPEND add_libs_rel "${BZ2_RELEASE};${EXPAT_RELEASE};${FFI_RELEASE};${LZMA_RELEASE};${MPDECIMAL_RELEASE};${SQLITE3_LIBRARIES_RELEASE}")
-        list(APPEND add_libs_dbg "${BZ2_DEBUG};${EXPAT_DEBUG};${FFI_DEBUG};${LZMA_DEBUG};${MPDECIMAL_DEBUG};${SQLITE3_LIBRARIES_DEBUG}")
+        list(APPEND add_libs_rel "${BZ2_RELEASE};${EXPAT_RELEASE};${FFI_RELEASE};${LZMA_RELEASE};${SQLITE3_LIBRARIES_RELEASE}")
+        list(APPEND add_libs_dbg "${BZ2_DEBUG};${EXPAT_DEBUG};${FFI_DEBUG};${LZMA_DEBUG};${SQLITE3_LIBRARIES_DEBUG}")
     else()
         message(STATUS "WARNING: Extensions have been disabled. No C extension modules will be available.")
     endif()
@@ -126,8 +132,7 @@ if(VCPKG_TARGET_IS_WINDOWS)
     list(APPEND add_libs_rel "${ZLIB_RELEASE}")
     list(APPEND add_libs_dbg "${ZLIB_DEBUG}")
 
-    # 3.13: PC/pyconfig.h no longer exists in the source tree; it is generated
-    # from PC/pyconfig.h.in into the PCbuild intermediate dir during the build.
+    configure_file("${SOURCE_PATH}/PC/pyconfig.h" "${SOURCE_PATH}/PC/pyconfig.h")
     configure_file("${CMAKE_CURRENT_LIST_DIR}/python_vcpkg.props.in" "${SOURCE_PATH}/PCbuild/python_vcpkg.props")
     configure_file("${CMAKE_CURRENT_LIST_DIR}/openssl.props.in" "${SOURCE_PATH}/PCbuild/openssl.props")
     file(WRITE "${SOURCE_PATH}/PCbuild/libffi.props"
@@ -200,13 +205,7 @@ if(VCPKG_TARGET_IS_WINDOWS)
         file(COPY ${PYTHON_EXTENSIONS_DEBUG} DESTINATION "${CURRENT_PACKAGES_DIR}/debug/bin")
     endif()
 
-    # 3.13: pyconfig.h is generated during the build; pick it out of the build tree
-    file(GLOB_RECURSE generated_pyconfig_h "${CURRENT_BUILDTREES_DIR}/${TARGET_TRIPLET}-rel/PCbuild/**/pyconfig.h")
-    if(NOT generated_pyconfig_h)
-        message(FATAL_ERROR "3.13 generated pyconfig.h not found under ${CURRENT_BUILDTREES_DIR}/${TARGET_TRIPLET}-rel/PCbuild")
-    endif()
-    list(GET generated_pyconfig_h 0 generated_pyconfig_h)
-    file(COPY "${SOURCE_PATH}/Include/" "${generated_pyconfig_h}"
+    file(COPY "${SOURCE_PATH}/Include/" "${SOURCE_PATH}/PC/pyconfig.h"
         DESTINATION "${CURRENT_PACKAGES_DIR}/include/python${PYTHON_VERSION_MAJOR}.${PYTHON_VERSION_MINOR}"
         FILES_MATCHING PATTERN *.h
     )
@@ -269,11 +268,18 @@ else()
 
     set(OPTIONS
         "--with-lto"
-        "--enable-shared"
         "--with-openssl=${CURRENT_INSTALLED_DIR}"
         "--without-ensurepip"
         "--with-suffix="
     )
+    if(VCPKG_TARGET_IS_IOS)
+        # The CPython documentation's iOS layout: Python.framework, with the stdlib's binary
+        # modules linked against it (-framework Python), installed under the prefix.
+        # --enable-shared and --enable-framework are mutually exclusive.
+        list(APPEND OPTIONS "--enable-framework=${CURRENT_INSTALLED_DIR}")
+    else()
+        list(APPEND OPTIONS "--enable-shared")
+    endif()
 
     if(TARGET_TRIPLET MATCHES ".*universal-osx.*")
         list(APPEND OPTIONS "--enable-universalsdk")
@@ -281,36 +287,33 @@ else()
     endif()
 
     if(VCPKG_TARGET_IS_IOS)
+        # BeeWare's configure reads the deployment target and the device kind from the host
+        # triple (aarch64-apple-ios17.0[-simulator]); the triplet's plain aarch64-apple-ios
+        # would give a 13.0 platform tag and a device build for the simulator.
         if(VCPKG_OSX_SYSROOT MATCHES "[Ss]imulator")
-            # The device and simulator triplets need different min-version flag families
-            # (0021-ios-simulator-min-version.patch makes configure honor IOS_MIN_VERSION_FLAG,
-            # and IPHONEOS_DEPLOYMENT_TARGET here pins the floor to the triplet's, not the
-            # configure default of 13.0). CPP must match the SDK too -- iphoneos -E on a
-            # simulator triplet makes configure's own probes disagree with the link line.
+            set(VCPKG_MAKE_BUILD_TRIPLET "--host=aarch64-apple-ios${VCPKG_OSX_DEPLOYMENT_TARGET}-simulator")
+            # CPP must match the SDK too -- iphoneos -E on a simulator triplet makes configure's
+            # own probes disagree with the link line.
             list(APPEND OPTIONS "CPP=xcrun --sdk iphonesimulator clang -target arm64-apple-ios${VCPKG_OSX_DEPLOYMENT_TARGET}-simulator -E")
-            list(APPEND OPTIONS "IOS_MIN_VERSION_FLAG=-mios-simulator-version-min")
-            list(APPEND OPTIONS "IPHONEOS_DEPLOYMENT_TARGET=${VCPKG_OSX_DEPLOYMENT_TARGET}")
         else()
+            set(VCPKG_MAKE_BUILD_TRIPLET "--host=aarch64-apple-ios${VCPKG_OSX_DEPLOYMENT_TARGET}")
             list(APPEND OPTIONS "CPP=xcrun --sdk iphoneos clang -target arm64-apple-ios${VCPKG_OSX_DEPLOYMENT_TARGET} -E")
         endif()
     endif()
 
-    # iOS needs these for the same reason macOS does, and VCPKG_TARGET_IS_OSX is false for
-    # iOS -- so without it here, configure finds libintl.h in the installed tree, enables
-    # gettext support in _localemodule.c, and then python.exe fails to link on
-    # _libintl_textdomain / _libintl_localeconv. libintl.a and libiconv.a are both present
-    # and built for arm64-ios in the closure; only the link flags were missing.
+    # Xcode 27's SDKs declare pipe2 and dup3, which 3.12's configure then finds by linking, but
+    # macOS 26 and iOS 17 do not have them at run time: os.pipe() called a NULL pipe2 and the host
+    # interpreter segfaulted in subprocess (prototype-python-runtime). 3.13's configure does not
+    # pick them up on Apple platforms; tell 3.12's the same.
+    if(VCPKG_TARGET_IS_OSX OR VCPKG_TARGET_IS_IOS)
+        list(APPEND OPTIONS "ac_cv_func_pipe2=no" "ac_cv_func_dup3=no")
+    endif()
+
+    # gettext-libintl and libiconv are not dependencies on iOS and Android (technical route
+    # section 12 conclusion 6, operating model 6.7: no LGPL libraries on mobile), so _locale
+    # is built without gettext there.
     if(VCPKG_TARGET_IS_OSX OR VCPKG_TARGET_IS_BSD)
         list(APPEND OPTIONS "LIBS=-liconv -lintl")
-    elseif(VCPKG_TARGET_IS_IOS)
-        # CoreFoundation is not optional here. libintl's Apple locale code (langprefs.o,
-        # setlocale.o, localename) calls CFPreferencesCopyAppValue,
-        # CFLocaleCopyPreferredLanguages, CFRelease and friends. CPython's own link gets
-        # away without naming it because LINKFORSHARED already carries
-        # -framework CoreFoundation on iOS -- but -lintl propagates to consumers through
-        # python3.pc and sysconfig, so downstream ports (greenlet was the first) link
-        # libintl with no CoreFoundation and fail on those symbols.
-        list(APPEND OPTIONS "LIBS=-liconv -lintl -framework CoreFoundation")
     endif()
 
     if("readline" IN_LIST FEATURES)
@@ -321,6 +324,9 @@ else()
 
     if(VCPKG_TARGET_IS_ANDROID)
         list(APPEND OPTIONS "--without-static-libpython" )
+        # Chaquopy's 3.12 build (target/python/build.sh): IPv6 on (configure cannot run its
+        # getaddrinfo probe when cross-compiling) and the SipHash default rather than FNV.
+        list(APPEND OPTIONS "--enable-ipv6" "ac_cv_aligned_required=no")
         # Bionic's PAGE_SIZE macro assumes 4 KB pages. NDK r28 and later switch it off by default
         # for 16 KB page-size devices, but only through the NDK's CMake toolchain; an autotools
         # build has to ask for that itself. Same flag as CPython's own Android build
@@ -329,14 +335,8 @@ else()
         string(APPEND VCPKG_CXX_FLAGS " -D__BIONIC_NO_PAGE_SIZE_MACRO")
         # --with-lto with clang makes configure look for llvm-ar as its own precious
         # variable (AC_PATH_TOOL LLVM_AR); it does not consult AR, which vcpkg does set to
-        # the NDK llvm-ar. Darwin gets away with it because configure falls back to
-        # "xcrun ar" when the lookup fails, and Android has no such fallback -- it errors
-        # with "llvm-ar is required for a --with-lto build with clang". Located through
-        # ANDROID_NDK_HOME, which the arm64-android triplets already pass through, so the
-        # host prebuilt directory name does not have to be hardcoded.
-        # llvm-ar*, not llvm-ar: on a Windows host the NDK prebuilt is llvm-ar.exe, and
-        # the bare name matched nothing -- every arm64-android python3 build on a Windows
-        # host died here at configure. Unix hosts match the bare name as before.
+        # the NDK llvm-ar. Android has no "xcrun ar" fallback, so name it. llvm-ar* so the
+        # Windows host's llvm-ar.exe matches too.
         file(GLOB _python_ndk_llvm_ar "$ENV{ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/*/bin/llvm-ar*")
         if(NOT _python_ndk_llvm_ar)
             message(FATAL_ERROR "Could not find llvm-ar under ANDROID_NDK_HOME=$ENV{ANDROID_NDK_HOME}")
@@ -358,10 +358,8 @@ else()
     # The version of the build Python must match the version of the cross compiled host Python.
     # https://docs.python.org/3/using/configure.html#cross-compiling-options
     if(VCPKG_CROSSCOMPILING)
-        # The host package's interpreter is python.exe on a Windows host and
-        # python3.<minor> everywhere else; --with-build-python with the wrong name is
-        # "invalid or missing build python binary" at configure, right after the
-        # llvm-ar fix above got this far on a Windows host for the first time.
+        # The host package's interpreter is python.exe on a Windows host and python3.<minor>
+        # everywhere else.
         if(CMAKE_HOST_WIN32)
             set(_python_for_build "${CURRENT_HOST_INSTALLED_DIR}/tools/python3/python.exe")
         else()
@@ -370,9 +368,16 @@ else()
         list(APPEND OPTIONS "--with-build-python=${_python_for_build}")
     endif()
 
+    # vcpkg-make adds --enable-shared for a dynamic triplet; the iOS framework build refuses it
+    # next to --enable-framework ("use only --enable-framework instead").
+    set(_python_default_options_exclude "")
+    if(VCPKG_TARGET_IS_IOS)
+        set(_python_default_options_exclude "^--enable-shared$")
+    endif()
     vcpkg_make_configure(
         SOURCE_PATH "${SOURCE_PATH}"
         AUTORECONF
+        DEFAULT_OPTIONS_EXCLUDE "${_python_default_options_exclude}"
         OPTIONS
             ${OPTIONS}
         OPTIONS_DEBUG
@@ -381,9 +386,32 @@ else()
         OPTIONS_RELEASE
             "vcpkg_rpath=${CURRENT_INSTALLED_DIR}/lib"
     )
-    vcpkg_make_install(TARGETS altinstall)
+    if(VCPKG_TARGET_IS_IOS)
+        # CPython's iOS install is `make install`: the framework structure, libinstall,
+        # inclinstall, sharedinstall and the framework headers -- no python executable, which
+        # altinstall's altbininstall would want. Serial, because frameworkinstallunversionedstructure
+        # clears include/ while inclinstall writes it; the build itself runs in parallel first.
+        vcpkg_make_install(TARGETS all)
+        vcpkg_make_install(TARGETS install DISABLE_PARALLEL)
+    else()
+        vcpkg_make_install(TARGETS altinstall)
+    endif()
 
     file(COPY "${CURRENT_PACKAGES_DIR}/tools/${PORT}/bin/" DESTINATION "${CURRENT_PACKAGES_DIR}/tools/${PORT}")
+
+    if(VCPKG_TARGET_IS_IOS)
+        # The framework install puts Python.framework at the prefix root, with
+        # lib/libpython3.x.dylib and include/python3.x as symlinks into it. Keep the framework
+        # under lib/ (the app copies it into Frameworks/ as is), and give consumers a real
+        # lib/libpython3.x.dylib and include/python3.x: the dylib's install name is
+        # @rpath/Python.framework/Python, so whatever links it loads the framework at run time.
+        set(_py_mm "${PYTHON_VERSION_MAJOR}.${PYTHON_VERSION_MINOR}")
+        file(RENAME "${CURRENT_PACKAGES_DIR}/Python.framework" "${CURRENT_PACKAGES_DIR}/lib/Python.framework")
+        file(REMOVE "${CURRENT_PACKAGES_DIR}/lib/libpython${_py_mm}.dylib")
+        file(COPY_FILE "${CURRENT_PACKAGES_DIR}/lib/Python.framework/Python" "${CURRENT_PACKAGES_DIR}/lib/libpython${_py_mm}.dylib")
+        file(REMOVE "${CURRENT_PACKAGES_DIR}/include/python${_py_mm}")
+        file(COPY "${CURRENT_PACKAGES_DIR}/lib/Python.framework/Headers/" DESTINATION "${CURRENT_PACKAGES_DIR}/include/python${_py_mm}")
+    endif()
 
     # Makefiles, c files, __pycache__, and other junk.
     file(GLOB PYTHON_LIB_DIRS LIST_DIRECTORIES true
@@ -476,7 +504,7 @@ if (NOT VCPKG_TARGET_IS_WINDOWS)
     endif()
 endif()
 
-if(NOT VCPKG_TARGET_IS_WINDOWS)
+if(NOT VCPKG_TARGET_IS_WINDOWS AND NOT VCPKG_TARGET_IS_IOS)   # an iOS framework build has no executable
   file(COPY_FILE "${CURRENT_PACKAGES_DIR}/tools/python3/python3.${PYTHON_VERSION_MINOR}" "${CURRENT_PACKAGES_DIR}/tools/python3/python3")
 endif()
 
