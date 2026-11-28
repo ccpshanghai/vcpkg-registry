@@ -1,14 +1,25 @@
 vcpkg_from_git(
   OUT_SOURCE_PATH SOURCE_PATH
   # M3 = imageio is the seventh fork (spec §2.5): the ASTC/KTX2 work lives on
-  # ccpshanghai/imageio. The m3-ktx2-astc branch squash-merged into the fork's mobile-exp
-  # as caaf391e, so the REF here is the merged commit rather than the topic branch's tip --
-  # a pin to a retired branch breaks the day the branch goes (the same trap the trinity pin
-  # fix walked one level up). Landed bottom-up: fork -> port URL/REF (here) -> registry PR
-  # -> trinity baseline bump.
+  # ccpshanghai/imageio. Pins point at the merged commit on the fork's mobile-exp rather than
+  # a topic branch's tip -- a pin to a retired branch breaks the day the branch goes (the same
+  # trap the trinity pin fix walked one level up). Landed bottom-up: fork -> port URL/REF
+  # (here) -> registry PR -> trinity baseline bump.
+  #
+  # prototype-texture-conversion M2: the imageio PR's head (uncompressed and 3D KTX2, R16F as
+  # VkFormat 76, OpenVDB optional, ASTC volumes, five HostBitmap/TGA/build fixes). While that
+  # PR is open the REF is its head; it is re-pinned to the squash commit on mobile-exp when it
+  # merges, before this registry PR merges.
   URL git@github.com:ccpshanghai/imageio.git
-  REF caaf391e0055689b5e0c496fb66137f815e748ae
+  REF 14e043e96f673a334542b89a848e71e96e018c62
   HEAD_REF mobile-exp
+)
+
+# NanoVDB volume support is the `openvdb` feature: a default feature on the desktop triplets and
+# off on Android and iOS, which do not carry VDB (vcpkg.json "default-features").
+vcpkg_check_features(OUT_FEATURE_OPTIONS FEATURE_OPTIONS
+  FEATURES
+    openvdb IMAGEIO_OPENVDB
 )
 
 vcpkg_cmake_configure(

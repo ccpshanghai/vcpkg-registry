@@ -1,7 +1,7 @@
 {
   "name": "carbon-imageio",
   "version": "2.0.6",
-  "port-version": 6,
+  "port-version": 7,
   "description": "Image IO tools for Carbon.",
   "dependencies": [
     {
@@ -27,14 +27,6 @@
       "version>=": "1.6.47"
     },
     {
-      "name": "openvdb",
-      "default-features": false,
-      "features": [
-        "nanovdb-nocuda"
-      ],
-      "version>=": "10.0.0#1"
-    },
-    {
       "name": "vcpkg-cmake",
       "host": true
     },
@@ -47,6 +39,27 @@
       "version>=": "2.2.5"
     }
   ],
+  "default-features": [
+    {
+      "name": "openvdb",
+      "platform": "!android & !ios"
+    }
+  ],
+  "features": {
+    "openvdb": {
+      "description": "NanoVDB volume support (IMAGEIO_OPENVDB). Default on desktop; the mobile triplets leave it off.",
+      "dependencies": [
+        {
+          "name": "openvdb",
+          "default-features": false,
+          "features": [
+            "nanovdb-nocuda"
+          ],
+          "version>=": "10.0.0#1"
+        }
+      ]
+    }
+  },
   "overrides": [
     {
       "name": "openexr",
