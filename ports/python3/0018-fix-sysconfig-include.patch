@@ -1,10 +1,8 @@
-diff --git a/Lib/sysconfig/__init__.py b/Lib/sysconfig/__init__.py
+diff --git a/Lib/sysconfig.py b/Lib/sysconfig.py
 index ebe371182..e351df7da 100644
---- a/Lib/sysconfig/__init__.py
-+++ b/Lib/sysconfig/__init__.py
-@@ -51,10 +51,10 @@
-     'nt': {
-         'stdlib': '{installed_base}/Lib',
+--- a/Lib/sysconfig.py
++++ b/Lib/sysconfig.py
+@@ -51,8 +51,8 @@
          'platstdlib': '{base}/Lib',
          'purelib': '{base}/Lib/site-packages',
          'platlib': '{base}/Lib/site-packages',

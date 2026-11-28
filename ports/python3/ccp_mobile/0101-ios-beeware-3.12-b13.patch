@@ -1,0 +1,3264 @@
+diff --git a/Lib/_apple_support.py b/Lib/_apple_support.py
+new file mode 100644
+index 0000000..92febdc
+--- /dev/null
++++ b/Lib/_apple_support.py
+@@ -0,0 +1,66 @@
++import io
++import sys
++
++
++def init_streams(log_write, stdout_level, stderr_level):
++    # Redirect stdout and stderr to the Apple system log. This method is
++    # invoked by init_apple_streams() (initconfig.c) if config->use_system_logger
++    # is enabled.
++    sys.stdout = SystemLog(log_write, stdout_level, errors=sys.stderr.errors)
++    sys.stderr = SystemLog(log_write, stderr_level, errors=sys.stderr.errors)
++
++
++class SystemLog(io.TextIOWrapper):
++    def __init__(self, log_write, level, **kwargs):
++        kwargs.setdefault("encoding", "UTF-8")
++        kwargs.setdefault("line_buffering", True)
++        super().__init__(LogStream(log_write, level), **kwargs)
++
++    def __repr__(self):
++        return f"<SystemLog (level {self.buffer.level})>"
++
++    def write(self, s):
++        if not isinstance(s, str):
++            raise TypeError(
++                f"write() argument must be str, not {type(s).__name__}")
++
++        # In case `s` is a str subclass that writes itself to stdout or stderr
++        # when we call its methods, convert it to an actual str.
++        s = str.__str__(s)
++
++        # We want to emit one log message per line, so split
++        # the string before sending it to the superclass.
++        for line in s.splitlines(keepends=True):
++            super().write(line)
++
++        return len(s)
++
++
++class LogStream(io.RawIOBase):
++    def __init__(self, log_write, level):
++        self.log_write = log_write
++        self.level = level
++
++    def __repr__(self):
++        return f"<LogStream (level {self.level!r})>"
++
++    def writable(self):
++        return True
++
++    def write(self, b):
++        if type(b) is not bytes:
++            try:
++                b = bytes(memoryview(b))
++            except TypeError:
++                raise TypeError(
++                    f"write() argument must be bytes-like, not {type(b).__name__}"
++                ) from None
++
++        # Writing an empty string to the stream should have no effect.
++        if b:
++            # Encode null bytes using "modified UTF-8" to avoid truncating the
++            # message. This should not affect the return value, as the caller
++            # may be expecting it to match the length of the input.
++            self.log_write(self.level, b.replace(b"\x00", b"\xc0\x80"))
++
++        return len(b)
+diff --git a/Lib/_ios_support.py b/Lib/_ios_support.py
+new file mode 100644
+index 0000000..542f5a1
+--- /dev/null
++++ b/Lib/_ios_support.py
+@@ -0,0 +1,74 @@
++import sys
++try:
++    from ctypes import cdll, c_void_p, c_char_p, util
++except ImportError:
++    # ctypes is an optional module. If it's not present, we're limited in what
++    # we can tell about the system, but we don't want to prevent the module
++    # from working.
++    print("ctypes isn't available; iOS system calls will not be available")
++    objc = None
++else:
++    # ctypes is available. Load the ObjC library, and wrap the objc_getClass,
++    # sel_registerName methods
++    # find_library() resolves a system library through the dyld shared cache,
++    # which needs _dyld_shared_cache_contains_path(); that is unavailable before
++    # iOS 14, so fall back to the bare name, which dyld resolves by itself.
++    lib = util.find_library("objc") or "libobjc.dylib"
++
++    try:
++        objc = cdll.LoadLibrary(lib)
++    except OSError:
++        raise ImportError("ObjC runtime library couldn't be loaded")
++    objc.objc_getClass.restype = c_void_p
++    objc.objc_getClass.argtypes = [c_char_p]
++    objc.sel_registerName.restype = c_void_p
++    objc.sel_registerName.argtypes = [c_char_p]
++
++
++def get_platform_ios():
++    # Determine if this is a simulator using the multiarch value
++    is_simulator = sys.implementation._multiarch.endswith("simulator")
++
++    # We can't use ctypes; abort
++    if not objc:
++        return None
++
++    # Most of the methods return ObjC objects
++    objc.objc_msgSend.restype = c_void_p
++    # All the methods used have no arguments.
++    objc.objc_msgSend.argtypes = [c_void_p, c_void_p]
++
++    # Equivalent of:
++    #   device = [UIDevice currentDevice]
++    UIDevice = objc.objc_getClass(b"UIDevice")
++    SEL_currentDevice = objc.sel_registerName(b"currentDevice")
++    device = objc.objc_msgSend(UIDevice, SEL_currentDevice)
++
++    # Equivalent of:
++    #   device_systemVersion = [device systemVersion]
++    SEL_systemVersion = objc.sel_registerName(b"systemVersion")
++    device_systemVersion = objc.objc_msgSend(device, SEL_systemVersion)
++
++    # Equivalent of:
++    #   device_systemName = [device systemName]
++    SEL_systemName = objc.sel_registerName(b"systemName")
++    device_systemName = objc.objc_msgSend(device, SEL_systemName)
++
++    # Equivalent of:
++    #   device_model = [device model]
++    SEL_model = objc.sel_registerName(b"model")
++    device_model = objc.objc_msgSend(device, SEL_model)
++
++    # UTF8String returns a const char*;
++    SEL_UTF8String = objc.sel_registerName(b"UTF8String")
++    objc.objc_msgSend.restype = c_char_p
++
++    # Equivalent of:
++    #   system = [device_systemName UTF8String]
++    #   release = [device_systemVersion UTF8String]
++    #   model = [device_model UTF8String]
++    system = objc.objc_msgSend(device_systemName, SEL_UTF8String).decode()
++    release = objc.objc_msgSend(device_systemVersion, SEL_UTF8String).decode()
++    model = objc.objc_msgSend(device_model, SEL_UTF8String).decode()
++
++    return system, release, model, is_simulator
+diff --git a/Lib/ctypes/__init__.py b/Lib/ctypes/__init__.py
+index 6cedee7..0e88cff 100644
+--- a/Lib/ctypes/__init__.py
++++ b/Lib/ctypes/__init__.py
+@@ -346,6 +346,17 @@ def __init__(self, name, mode=DEFAULT_MODE, handle=None,
+                  winmode=None):
+         if name:
+             name = _os.fspath(name)
++
++            # If the filename that has been provided is an iOS/tvOS/watchOS
++            # .fwork file, dereference the location to the true origin of the
++            # binary.
++            if name.endswith(".fwork"):
++                with open(name) as f:
++                    name = _os.path.join(
++                        _os.path.dirname(_sys.executable),
++                        f.read().strip()
++                    )
++
+         self._name = name
+         flags = self._func_flags_
+         if use_errno:
+diff --git a/Lib/ctypes/util.py b/Lib/ctypes/util.py
+index c550883..12d7428 100644
+--- a/Lib/ctypes/util.py
++++ b/Lib/ctypes/util.py
+@@ -67,7 +67,7 @@ def find_library(name):
+                 return fname
+         return None
+ 
+-elif os.name == "posix" and sys.platform == "darwin":
++elif os.name == "posix" and sys.platform in {"darwin", "ios", "tvos", "watchos"}:
+     from ctypes.macholib.dyld import dyld_find as _dyld_find
+     def find_library(name):
+         possible = ['lib%s.dylib' % name,
+diff --git a/Lib/importlib/_bootstrap_external.py b/Lib/importlib/_bootstrap_external.py
+index 6e4a087..f0cd49b 100644
+--- a/Lib/importlib/_bootstrap_external.py
++++ b/Lib/importlib/_bootstrap_external.py
+@@ -52,7 +52,7 @@
+ 
+ # Bootstrap-related code ######################################################
+ _CASE_INSENSITIVE_PLATFORMS_STR_KEY = 'win',
+-_CASE_INSENSITIVE_PLATFORMS_BYTES_KEY = 'cygwin', 'darwin'
++_CASE_INSENSITIVE_PLATFORMS_BYTES_KEY = 'cygwin', 'darwin', 'ios', 'tvos', 'watchos'
+ _CASE_INSENSITIVE_PLATFORMS =  (_CASE_INSENSITIVE_PLATFORMS_BYTES_KEY
+                                 + _CASE_INSENSITIVE_PLATFORMS_STR_KEY)
+ 
+@@ -1698,6 +1698,46 @@ def __repr__(self):
+         return f'FileFinder({self.path!r})'
+ 
+ 
++class AppleFrameworkLoader(ExtensionFileLoader):
++    """A loader for modules that have been packaged as frameworks for
++    compatibility with Apple's iOS App Store policies.
++    """
++    def create_module(self, spec):
++        # If the ModuleSpec has been created by the FileFinder, it will have
++        # been created with an origin pointing to the .fwork file. We need to
++        # redirect this to the location in the Frameworks folder, using the
++        # content of the .fwork file.
++        if spec.origin.endswith(".fwork"):
++            with _io.FileIO(spec.origin, 'r') as file:
++                framework_binary = file.read().decode().strip()
++            bundle_path = _path_split(sys.executable)[0]
++            spec.origin = _path_join(bundle_path, framework_binary)
++
++        # If the loader is created based on the spec for a loaded module, the
++        # path will be pointing at the Framework location. If this occurs,
++        # get the original .fwork location to use as the module's __file__.
++        if self.path.endswith(".fwork"):
++            path = self.path
++        else:
++            with _io.FileIO(self.path + ".origin", 'r') as file:
++                origin = file.read().decode().strip()
++                bundle_path = _path_split(sys.executable)[0]
++                path = _path_join(bundle_path, origin)
++
++        module = _bootstrap._call_with_frames_removed(_imp.create_dynamic, spec)
++
++        _bootstrap._verbose_message(
++            "Apple framework extension module {!r} loaded from {!r} (path {!r})",
++            spec.name,
++            spec.origin,
++            path,
++        )
++
++        # Ensure that the __file__ points at the .fwork location
++        module.__file__ = path
++
++        return module
++
+ # Import setup ###############################################################
+ 
+ def _fix_up_module(ns, name, pathname, cpathname=None):
+@@ -1730,10 +1770,17 @@ def _get_supported_file_loaders():
+ 
+     Each item is a tuple (loader, suffixes).
+     """
+-    extensions = ExtensionFileLoader, _imp.extension_suffixes()
++    if sys.platform in {"ios", "tvos", "watchos"}:
++        extension_loaders = [(AppleFrameworkLoader, [
++            suffix.replace(".so", ".fwork")
++            for suffix in _imp.extension_suffixes()
++        ])]
++    else:
++        extension_loaders = []
++    extension_loaders.append((ExtensionFileLoader, _imp.extension_suffixes()))
+     source = SourceFileLoader, SOURCE_SUFFIXES
+     bytecode = SourcelessFileLoader, BYTECODE_SUFFIXES
+-    return [extensions, source, bytecode]
++    return extension_loaders + [source, bytecode]
+ 
+ 
+ def _set_bootstrap_module(_bootstrap_module):
+diff --git a/Lib/importlib/abc.py b/Lib/importlib/abc.py
+index b56fa94..37fef35 100644
+--- a/Lib/importlib/abc.py
++++ b/Lib/importlib/abc.py
+@@ -180,7 +180,11 @@ def get_code(self, fullname):
+         else:
+             return self.source_to_code(source, path)
+ 
+-_register(ExecutionLoader, machinery.ExtensionFileLoader)
++_register(
++    ExecutionLoader,
++    machinery.ExtensionFileLoader,
++    machinery.AppleFrameworkLoader,
++)
+ 
+ 
+ class FileLoader(_bootstrap_external.FileLoader, ResourceLoader, ExecutionLoader):
+diff --git a/Lib/importlib/machinery.py b/Lib/importlib/machinery.py
+index d9a19a1..fbd30b1 100644
+--- a/Lib/importlib/machinery.py
++++ b/Lib/importlib/machinery.py
+@@ -12,6 +12,7 @@
+ from ._bootstrap_external import SourceFileLoader
+ from ._bootstrap_external import SourcelessFileLoader
+ from ._bootstrap_external import ExtensionFileLoader
++from ._bootstrap_external import AppleFrameworkLoader
+ from ._bootstrap_external import NamespaceLoader
+ 
+ 
+diff --git a/Lib/inspect.py b/Lib/inspect.py
+index 2a8d9b0..4d0bbcb 100644
+--- a/Lib/inspect.py
++++ b/Lib/inspect.py
+@@ -961,6 +961,10 @@ def getsourcefile(object):
+     elif any(filename.endswith(s) for s in
+                  importlib.machinery.EXTENSION_SUFFIXES):
+         return None
++    elif filename.endswith(".fwork"):
++        # Apple mobile framework markers are another type of non-source file
++        return None
++
+     # return a filename found in the linecache even if it doesn't exist on disk
+     if filename in linecache.cache:
+         return filename
+@@ -991,6 +995,7 @@ def getmodule(object, _filename=None):
+         return object
+     if hasattr(object, '__module__'):
+         return sys.modules.get(object.__module__)
++
+     # Try the filename to modulename cache
+     if _filename is not None and _filename in modulesbyfile:
+         return sys.modules.get(modulesbyfile[_filename])
+@@ -1084,7 +1089,7 @@ def findsource(object):
+         # Allow filenames in form of "<something>" to pass through.
+         # `doctest` monkeypatches `linecache` module to enable
+         # inspection, so let `linecache.getlines` to be called.
+-        if not (file.startswith('<') and file.endswith('>')):
++        if (not (file.startswith('<') and file.endswith('>'))) or file.endswith('.fwork'):
+             raise OSError('source code not available')
+ 
+     module = getmodule(object, file)
+diff --git a/Lib/modulefinder.py b/Lib/modulefinder.py
+index a0a020f..ac478ee 100644
+--- a/Lib/modulefinder.py
++++ b/Lib/modulefinder.py
+@@ -72,7 +72,12 @@ def _find_module(name, path=None):
+     if isinstance(spec.loader, importlib.machinery.SourceFileLoader):
+         kind = _PY_SOURCE
+ 
+-    elif isinstance(spec.loader, importlib.machinery.ExtensionFileLoader):
++    elif isinstance(
++        spec.loader, (
++            importlib.machinery.ExtensionFileLoader,
++            importlib.machinery.AppleFrameworkLoader,
++        )
++    ):
+         kind = _C_EXTENSION
+ 
+     elif isinstance(spec.loader, importlib.machinery.SourcelessFileLoader):
+diff --git a/Lib/platform.py b/Lib/platform.py
+index b86e683..115c2f6 100755
+--- a/Lib/platform.py
++++ b/Lib/platform.py
+@@ -498,6 +498,78 @@ def mac_ver(release='', versioninfo=('', '', ''), machine=''):
+     # If that also doesn't work return the default values
+     return release, versioninfo, machine
+ 
++
++# A namedtuple for iOS version information.
++IOSVersionInfo = collections.namedtuple(
++    "IOSVersionInfo",
++    ["system", "release", "model", "is_simulator"]
++)
++
++
++def ios_ver(system="", release="", model="", is_simulator=False):
++    """Get iOS version information, and return it as a namedtuple:
++        (system, release, model, is_simulator).
++
++    If values can't be determined, they are set to values provided as
++    parameters.
++    """
++    if sys.platform == "ios":
++        import _ios_support
++        result = _ios_support.get_platform_ios()
++        if result is not None:
++            return IOSVersionInfo(*result)
++
++    return IOSVersionInfo(system, release, model, is_simulator)
++
++
++# A namedtuple for tvOS version information.
++TVOSVersionInfo = collections.namedtuple(
++    "TVOSVersionInfo",
++    ["system", "release", "model", "is_simulator"]
++)
++
++
++def tvos_ver(system="", release="", model="", is_simulator=False):
++    """Get tvOS version information, and return it as a namedtuple:
++        (system, release, model, is_simulator).
++
++    If values can't be determined, they are set to values provided as
++    parameters.
++    """
++    if sys.platform == "tvos":
++        # TODO: Can the iOS implementation be used here?
++        import _ios_support
++        result = _ios_support.get_platform_ios()
++        if result is not None:
++            return TVOSVersionInfo(*result)
++
++    return TVOSVersionInfo(system, release, model, is_simulator)
++
++
++# A namedtuple for watchOS version information.
++WatchOSVersionInfo = collections.namedtuple(
++    "WatchOSVersionInfo",
++    ["system", "release", "model", "is_simulator"]
++)
++
++
++def watchos_ver(system="", release="", model="", is_simulator=False):
++    """Get watchOS version information, and return it as a namedtuple:
++        (system, release, model, is_simulator).
++
++    If values can't be determined, they are set to values provided as
++    parameters.
++    """
++    if sys.platform == "watchos":
++        # TODO: Can the iOS implementation be used here?
++        import _ios_support
++        result = _ios_support.get_platform_ios()
++        if result is not None:
++            return WatchOSVersionInfo(*result)
++
++    return WatchOSVersionInfo(system, release, model, is_simulator)
++
++
+ def _java_getprop(name, default):
+ 
+     from java.lang import System
+@@ -613,7 +685,7 @@ def _platform(*args):
+         if cleaned == platform:
+             break
+         platform = cleaned
+-    while platform[-1] == '-':
++    while platform and platform[-1] == '-':
+         platform = platform[:-1]
+ 
+     return platform
+@@ -654,7 +726,7 @@ def _syscmd_file(target, default=''):
+         default in case the command should fail.
+ 
+     """
+-    if sys.platform in ('dos', 'win32', 'win16'):
++    if sys.platform in {'dos', 'win32', 'win16', 'ios', 'tvos', 'watchos'}:
+         # XXX Others too ?
+         return default
+ 
+@@ -816,6 +888,25 @@ def get_OpenVMS():
+             csid, cpu_number = vms_lib.getsyi('SYI$_CPU', 0)
+             return 'Alpha' if cpu_number >= 128 else 'VAX'
+ 
++    # On the iOS/tvOS/watchOS simulator, os.uname returns the architecture as
++    # uname.machine. On device it returns the model name for some reason; but
++    # there's only one CPU architecture for devices, so we know the right
++    # answer.
++    def get_ios():
++        if sys.implementation._multiarch.endswith("simulator"):
++            return os.uname().machine
++        return 'arm64'
++
++    def get_tvos():
++        if sys.implementation._multiarch.endswith("simulator"):
++            return os.uname().machine
++        return 'arm64'
++
++    def get_watchos():
++        if sys.implementation._multiarch.endswith("simulator"):
++            return os.uname().machine
++        return 'arm64_32'
++
+     def from_subprocess():
+         """
+         Fall back to `uname -p`
+@@ -970,6 +1061,14 @@ def uname():
+         system = 'Windows'
+         release = 'Vista'
+ 
++    # Normalize responses on Apple mobile platforms
++    if sys.platform == 'ios':
++        system, release, _, _ = ios_ver()
++    if sys.platform == 'tvos':
++        system, release, _, _ = tvos_ver()
++    if sys.platform == 'watchos':
++        system, release, _, _ = watchos_ver()
++
+     vals = system, node, release, version, machine
+     # Replace 'unknown' values with the more portable ''
+     _uname_cache = uname_result(*map(_unknown_as_blank, vals))
+@@ -1249,11 +1348,18 @@ def platform(aliased=False, terse=False):
+         system, release, version = system_alias(system, release, version)
+ 
+     if system == 'Darwin':
+-        # macOS (darwin kernel)
+-        macos_release = mac_ver()[0]
+-        if macos_release:
+-            system = 'macOS'
+-            release = macos_release
++        # macOS and iOS both report as a "Darwin" kernel
++        if sys.platform == "ios":
++            system, release, _, _ = ios_ver()
++        elif sys.platform == "tvos":
++            system, release, _, _ = tvos_ver()
++        elif sys.platform == "watchos":
++            system, release, _, _ = watchos_ver()
++        else:
++            macos_release = mac_ver()[0]
++            if macos_release:
++                system = 'macOS'
++                release = macos_release
+ 
+     if system == 'Windows':
+         # MS platforms
+diff --git a/Lib/site.py b/Lib/site.py
+index aed254a..ecbb2f5 100644
+--- a/Lib/site.py
++++ b/Lib/site.py
+@@ -287,8 +287,8 @@ def _getuserbase():
+     if env_base:
+         return env_base
+ 
+-    # Emscripten, VxWorks, and WASI have no home directories
+-    if sys.platform in {"emscripten", "vxworks", "wasi"}:
++    # Emscripten, iOS, tvOS, VxWorks, WASI, and watchOS have no home directories
++    if sys.platform in {"emscripten", "ios", "tvos", "vxworks", "wasi", "watchos"}:
+         return None
+ 
+     def joinuser(*args):
+diff --git a/Lib/subprocess.py b/Lib/subprocess.py
+index 881a9ce..e209f51 100644
+--- a/Lib/subprocess.py
++++ b/Lib/subprocess.py
+@@ -74,8 +74,8 @@
+ else:
+     _mswindows = True
+ 
+-# wasm32-emscripten and wasm32-wasi do not support processes
+-_can_fork_exec = sys.platform not in {"emscripten", "wasi"}
++# some platforms do not support subprocesses
++_can_fork_exec = sys.platform not in {"emscripten", "wasi", "ios", "tvos", "watchos"}
+ 
+ if _mswindows:
+     import _winapi
+@@ -103,18 +103,22 @@
+     if _can_fork_exec:
+         from _posixsubprocess import fork_exec as _fork_exec
+         # used in methods that are called by __del__
+-        _waitpid = os.waitpid
+-        _waitstatus_to_exitcode = os.waitstatus_to_exitcode
+-        _WIFSTOPPED = os.WIFSTOPPED
+-        _WSTOPSIG = os.WSTOPSIG
+-        _WNOHANG = os.WNOHANG
++        class _del_safe:
++            waitpid = os.waitpid
++            waitstatus_to_exitcode = os.waitstatus_to_exitcode
++            WIFSTOPPED = os.WIFSTOPPED
++            WSTOPSIG = os.WSTOPSIG
++            WNOHANG = os.WNOHANG
++            ECHILD = errno.ECHILD
+     else:
+-        _fork_exec = None
+-        _waitpid = None
+-        _waitstatus_to_exitcode = None
+-        _WIFSTOPPED = None
+-        _WSTOPSIG = None
+-        _WNOHANG = None
++        class _del_safe:
++            waitpid = None
++            waitstatus_to_exitcode = None
++            WIFSTOPPED = None
++            WSTOPSIG = None
++            WNOHANG = None
++            ECHILD = errno.ECHILD
++
+     import select
+     import selectors
+ 
+@@ -1958,20 +1962,16 @@ def _execute_child(self, args, executable, preexec_fn, close_fds,
+                 raise child_exception_type(err_msg)
+ 
+ 
+-        def _handle_exitstatus(self, sts,
+-                               _waitstatus_to_exitcode=_waitstatus_to_exitcode,
+-                               _WIFSTOPPED=_WIFSTOPPED,
+-                               _WSTOPSIG=_WSTOPSIG):
++        def _handle_exitstatus(self, sts, _del_safe=_del_safe):
+             """All callers to this function MUST hold self._waitpid_lock."""
+             # This method is called (indirectly) by __del__, so it cannot
+             # refer to anything outside of its local scope.
+-            if _WIFSTOPPED(sts):
+-                self.returncode = -_WSTOPSIG(sts)
++            if _del_safe.WIFSTOPPED(sts):
++                self.returncode = -_del_safe.WSTOPSIG(sts)
+             else:
+-                self.returncode = _waitstatus_to_exitcode(sts)
++                self.returncode = _del_safe.waitstatus_to_exitcode(sts)
+ 
+-        def _internal_poll(self, _deadstate=None, _waitpid=_waitpid,
+-                _WNOHANG=_WNOHANG, _ECHILD=errno.ECHILD):
++        def _internal_poll(self, _deadstate=None, _del_safe=_del_safe):
+             """Check if child process has terminated.  Returns returncode
+             attribute.
+ 
+@@ -1987,13 +1987,13 @@ def _internal_poll(self, _deadstate=None, _waitpid=_waitpid,
+                 try:
+                     if self.returncode is not None:
+                         return self.returncode  # Another thread waited.
+-                    pid, sts = _waitpid(self.pid, _WNOHANG)
++                    pid, sts = _del_safe.waitpid(self.pid, _del_safe.WNOHANG)
+                     if pid == self.pid:
+                         self._handle_exitstatus(sts)
+                 except OSError as e:
+                     if _deadstate is not None:
+                         self.returncode = _deadstate
+-                    elif e.errno == _ECHILD:
++                    elif e.errno == _del_safe.ECHILD:
+                         # This happens if SIGCLD is set to be ignored or
+                         # waiting for child processes has otherwise been
+                         # disabled for our process.  This child is dead, we
+diff --git a/Lib/sysconfig.py b/Lib/sysconfig.py
+index f892ba3..931a9c9 100644
+--- a/Lib/sysconfig.py
++++ b/Lib/sysconfig.py
+@@ -21,6 +21,7 @@
+ 
+ # Keys for get_config_var() that are never converted to Python integers.
+ _ALWAYS_STR = {
++    'IPHONEOS_DEPLOYMENT_TARGET',
+     'MACOSX_DEPLOYMENT_TARGET',
+ }
+ 
+@@ -57,6 +58,7 @@
+         'scripts': '{base}/Scripts',
+         'data': '{base}',
+         },
++
+     # Downstream distributors can overwrite the default install scheme.
+     # This is done to support downstream modifications where distributors change
+     # the installation layout (eg. different site-packages directory).
+@@ -112,8 +114,8 @@ def _getuserbase():
+     if env_base:
+         return env_base
+ 
+-    # Emscripten, VxWorks, and WASI have no home directories
+-    if sys.platform in {"emscripten", "vxworks", "wasi"}:
++    # Emscripten, iOS, tvOS, VxWorks, WASI, and watchOS have no home directories
++    if sys.platform in {"emscripten", "ios", "tvos", "vxworks", "wasi", "watchos"}:
+         return None
+ 
+     def joinuser(*args):
+@@ -299,6 +301,7 @@ def _get_preferred_schemes():
+             'home': 'posix_home',
+             'user': 'osx_framework_user',
+         }
++
+     return {
+         'prefix': 'posix_prefix',
+         'home': 'posix_home',
+@@ -844,10 +847,23 @@ def get_platform():
+         if m:
+             release = m.group()
+     elif osname[:6] == "darwin":
+-        import _osx_support
+-        osname, release, machine = _osx_support.get_platform_osx(
+-                                            get_config_vars(),
+-                                            osname, release, machine)
++        if sys.platform == "ios":
++            release = get_config_vars().get("IPHONEOS_DEPLOYMENT_TARGET", "13.0")
++            osname = sys.platform
++            machine = sys.implementation._multiarch
++        elif sys.platform == "tvos":
++            release = get_config_vars().get("TVOS_DEPLOYMENT_TARGET", "9.0")
++            osname = sys.platform
++            machine = sys.implementation._multiarch
++        elif sys.platform == "watchos":
++            release = get_config_vars().get("WATCHOS_DEPLOYMENT_TARGET", "4.0")
++            osname = sys.platform
++            machine = sys.implementation._multiarch
++        else:
++            import _osx_support
++            osname, release, machine = _osx_support.get_platform_osx(
++                                                get_config_vars(),
++                                                osname, release, machine)
+ 
+     return f"{osname}-{release}-{machine}"
+ 
+diff --git a/Lib/webbrowser.py b/Lib/webbrowser.py
+index 79e00f9..b37aedd 100755
+--- a/Lib/webbrowser.py
++++ b/Lib/webbrowser.py
+@@ -487,6 +487,9 @@ def register_standard_browsers():
+         # OS X can use below Unix support (but we prefer using the OS X
+         # specific stuff)
+ 
++    if sys.platform == "ios":
++        register("iosbrowser", None, IOSBrowser(), preferred=True)
++
+     if sys.platform == "serenityos":
+         # SerenityOS webbrowser, simply called "Browser".
+         register("Browser", None, BackgroundBrowser("Browser"))
+@@ -669,6 +672,70 @@ def open(self, url, new=0, autoraise=True):
+             rc = osapipe.close()
+             return not rc
+ 
++#
++# Platform support for iOS
++#
++if sys.platform == "ios":
++    from _ios_support import objc
++    if objc:
++        # If objc exists, we know ctypes is also importable.
++        from ctypes import c_void_p, c_char_p, c_ulong
++
++    class IOSBrowser(BaseBrowser):
++        def open(self, url, new=0, autoraise=True):
++            sys.audit("webbrowser.open", url)
++            # If ctypes isn't available, we can't open a browser
++            if objc is None:
++                return False
++
++            # All the messages in this call return object references.
++            objc.objc_msgSend.restype = c_void_p
++
++            # This is the equivalent of:
++            #    NSString url_string =
++            #        [NSString stringWithCString:url.encode("utf-8")
++            #                           encoding:NSUTF8StringEncoding];
++            NSString = objc.objc_getClass(b"NSString")
++            constructor = objc.sel_registerName(b"stringWithCString:encoding:")
++            objc.objc_msgSend.argtypes = [c_void_p, c_void_p, c_char_p, c_ulong]
++            url_string = objc.objc_msgSend(
++                NSString,
++                constructor,
++                url.encode("utf-8"),
++                4,  # NSUTF8StringEncoding = 4
++            )
++
++            # Create an NSURL object representing the URL
++            # This is the equivalent of:
++            #   NSURL *nsurl = [NSURL URLWithString:url];
++            NSURL = objc.objc_getClass(b"NSURL")
++            urlWithString_ = objc.sel_registerName(b"URLWithString:")
++            objc.objc_msgSend.argtypes = [c_void_p, c_void_p, c_void_p]
++            ns_url = objc.objc_msgSend(NSURL, urlWithString_, url_string)
++
++            # Get the shared UIApplication instance
++            # This code is the equivalent of:
++            # UIApplication shared_app = [UIApplication sharedApplication]
++            UIApplication = objc.objc_getClass(b"UIApplication")
++            sharedApplication = objc.sel_registerName(b"sharedApplication")
++            objc.objc_msgSend.argtypes = [c_void_p, c_void_p]
++            shared_app = objc.objc_msgSend(UIApplication, sharedApplication)
++
++            # Open the URL on the shared application
++            # This code is the equivalent of:
++            #   [shared_app openURL:ns_url
++            #               options:NIL
++            #     completionHandler:NIL];
++            openURL_ = objc.sel_registerName(b"openURL:options:completionHandler:")
++            objc.objc_msgSend.argtypes = [
++                c_void_p, c_void_p, c_void_p, c_void_p, c_void_p
++            ]
++            # Method returns void
++            objc.objc_msgSend.restype = None
++            objc.objc_msgSend(shared_app, openURL_, ns_url, None, None)
++
++            return True
++
+ 
+ def main():
+     import getopt
+diff --git a/Mac/Resources/app-store-compliance.patch b/Mac/Resources/app-store-compliance.patch
+new file mode 100644
+index 0000000..f4b7dec
+--- /dev/null
++++ b/Mac/Resources/app-store-compliance.patch
+@@ -0,0 +1,29 @@
++diff --git a/Lib/test/test_urlparse.py b/Lib/test/test_urlparse.py
++index d6c83a75c1c..19ed4e01091 100644
++--- a/Lib/test/test_urlparse.py
+++++ b/Lib/test/test_urlparse.py
++@@ -237,11 +237,6 @@ def test_roundtrips(self):
++               '','',''),
++              ('git+ssh', 'git@github.com','/user/project.git',
++               '', '')),
++-            ('itms-services://?action=download-manifest&url=https://example.com/app',
++-             ('itms-services', '', '', '',
++-              'action=download-manifest&url=https://example.com/app', ''),
++-             ('itms-services', '', '',
++-              'action=download-manifest&url=https://example.com/app', '')),
++             ('+scheme:path/to/file',
++              ('', '', '+scheme:path/to/file', '', '', ''),
++              ('', '', '+scheme:path/to/file', '', '')),
++diff --git a/Lib/urllib/parse.py b/Lib/urllib/parse.py
++index 8f724f907d4..148caf742c9 100644
++--- a/Lib/urllib/parse.py
+++++ b/Lib/urllib/parse.py
++@@ -59,7 +59,7 @@
++                'imap', 'wais', 'file', 'mms', 'https', 'shttp',
++                'snews', 'prospero', 'rtsp', 'rtsps', 'rtspu', 'rsync',
++                'svn', 'svn+ssh', 'sftp', 'nfs', 'git', 'git+ssh',
++-               'ws', 'wss', 'itms-services']
+++               'ws', 'wss']
++
++ uses_params = ['', 'ftp', 'hdl', 'prospero', 'http', 'imap',
++                'https', 'shttp', 'rtsp', 'rtsps', 'rtspu', 'sip',
+diff --git a/Makefile.pre.in b/Makefile.pre.in
+index d4e74e5..2aea065 100644
+--- a/Makefile.pre.in
++++ b/Makefile.pre.in
+@@ -178,18 +178,29 @@ EXPORTSFROM=	@EXPORTSFROM@
+ EXE=		@EXEEXT@
+ BUILDEXE=	@BUILDEXEEXT@
+ 
++# Name of the patch file to apply for app store compliance
++APP_STORE_COMPLIANCE_PATCH=@APP_STORE_COMPLIANCE_PATCH@
++
+ # Short name and location for Mac OS X Python framework
+ UNIVERSALSDK=@UNIVERSALSDK@
+ PYTHONFRAMEWORK=	@PYTHONFRAMEWORK@
+ PYTHONFRAMEWORKDIR=	@PYTHONFRAMEWORKDIR@
+ PYTHONFRAMEWORKPREFIX=	@PYTHONFRAMEWORKPREFIX@
+ PYTHONFRAMEWORKINSTALLDIR= @PYTHONFRAMEWORKINSTALLDIR@
+-# Deployment target selected during configure, to be checked
++PYTHONFRAMEWORKINSTALLNAMEPREFIX= @PYTHONFRAMEWORKINSTALLNAMEPREFIX@
++RESSRCDIR= @RESSRCDIR@
++# macOS deployment target selected during configure, to be checked
+ # by distutils. The export statement is needed to ensure that the
+ # deployment target is active during build.
+ MACOSX_DEPLOYMENT_TARGET=@CONFIGURE_MACOSX_DEPLOYMENT_TARGET@
+ @EXPORT_MACOSX_DEPLOYMENT_TARGET@export MACOSX_DEPLOYMENT_TARGET
+ 
++# iOS Deployment target selected during configure. Unlike macOS, the iOS
++# deployment target is controlled using `-mios-version-min` arguments added to
++# CFLAGS and LDFLAGS by the configure script. This variable is not used during
++# the build, and is only listed here so it will be included in sysconfigdata.
++IPHONEOS_DEPLOYMENT_TARGET=@IPHONEOS_DEPLOYMENT_TARGET@
++
+ # Option to install to strip binaries
+ STRIPFLAG=-s
+ 
+@@ -619,7 +630,7 @@ all:		@DEF_MAKE_ALL_RULE@
+ .PHONY: all
+ 
+ .PHONY: build_all
+-build_all:	check-clean-src $(BUILDPYTHON) platform sharedmods \
++build_all:	check-clean-src check-app-store-compliance $(BUILDPYTHON) platform sharedmods \
+ 		gdbhooks Programs/_testembed scripts checksharedmods rundsymutil
+ 
+ .PHONY: build_wasm
+@@ -642,6 +653,16 @@ check-clean-src:
+ 		exit 1; \
+ 	fi
+ 
++# Check that the app store compliance patch can be applied (if configured).
++# This is checked as a dry-run against the original library sources;
++# the patch will be actually applied during the install phase.
++.PHONY: check-app-store-compliance
++check-app-store-compliance:
++	@if [ "$(APP_STORE_COMPLIANCE_PATCH)" != "" ]; then \
++		patch --dry-run --quiet --force --strip 1 --directory "$(abs_srcdir)" --input "$(abs_srcdir)/$(APP_STORE_COMPLIANCE_PATCH)"; \
++		echo "App store compliance patch can be applied."; \
++	fi
++
+ # Profile generation build must start from a clean tree.
+ profile-clean-stamp:
+ 	$(MAKE) clean
+@@ -831,7 +852,7 @@ libpython3.so:	libpython$(LDVERSION).so
+ 	$(BLDSHARED) $(NO_AS_NEEDED) -o $@ -Wl,-h$@ $^
+ 
+ libpython$(LDVERSION).dylib: $(LIBRARY_OBJS)
+-	 $(CC) -dynamiclib -Wl,-single_module $(PY_CORE_LDFLAGS) -undefined dynamic_lookup -Wl,-install_name,@executable_path/libpython$(LDVERSION).dylib -Wl,-compatibility_version,$(VERSION) -Wl,-current_version,$(VERSION) -o $@ $(LIBRARY_OBJS) $(DTRACE_OBJS) $(SHLIBS) $(LIBC) $(LIBM); \
++	 $(CC) -dynamiclib $(PY_CORE_LDFLAGS) -undefined dynamic_lookup -Wl,-install_name,@executable_path/libpython$(LDVERSION).dylib -Wl,-compatibility_version,$(VERSION) -Wl,-current_version,$(VERSION) -o $@ $(LIBRARY_OBJS) $(DTRACE_OBJS) $(SHLIBS) $(LIBC) $(LIBM); \
+ 
+ 
+ libpython$(VERSION).sl: $(LIBRARY_OBJS)
+@@ -856,14 +877,13 @@ $(BUILDPYTHON)-gdb.py: $(SRC_GDB_HOOKS)
+ # This rule is here for OPENSTEP/Rhapsody/MacOSX. It builds a temporary
+ # minimal framework (not including the Lib directory and such) in the current
+ # directory.
+-RESSRCDIR=Mac/Resources/framework
+ $(PYTHONFRAMEWORKDIR)/Versions/$(VERSION)/$(PYTHONFRAMEWORK): \
+ 		$(LIBRARY) \
+ 		$(RESSRCDIR)/Info.plist
+ 	$(INSTALL) -d -m $(DIRMODE) $(PYTHONFRAMEWORKDIR)/Versions/$(VERSION)
+ 	$(CC) -o $(LDLIBRARY) $(PY_CORE_LDFLAGS) -dynamiclib \
+-		-all_load $(LIBRARY) -Wl,-single_module \
+-		-install_name $(DESTDIR)$(PYTHONFRAMEWORKINSTALLDIR)/Versions/$(VERSION)/$(PYTHONFRAMEWORK) \
++		-all_load $(LIBRARY) \
++		-install_name $(DESTDIR)$(PYTHONFRAMEWORKINSTALLNAMEPREFIX)/$(PYTHONFRAMEWORK) \
+ 		-compatibility_version $(VERSION) \
+ 		-current_version $(VERSION) \
+ 		-framework CoreFoundation $(LIBS);
+@@ -875,6 +895,21 @@ $(PYTHONFRAMEWORKDIR)/Versions/$(VERSION)/$(PYTHONFRAMEWORK): \
+ 	$(LN) -fsn Versions/Current/$(PYTHONFRAMEWORK) $(PYTHONFRAMEWORKDIR)/$(PYTHONFRAMEWORK)
+ 	$(LN) -fsn Versions/Current/Resources $(PYTHONFRAMEWORKDIR)/Resources
+ 
++# This rule is for iOS, which requires an annoyingly just slighly different
++# format for frameworks to macOS. It *doesn't* use a versioned framework, and
++# the Info.plist must be in the root of the framework.
++$(PYTHONFRAMEWORKDIR)/$(PYTHONFRAMEWORK): \
++		$(LIBRARY) \
++		$(RESSRCDIR)/Info.plist
++	$(INSTALL) -d -m $(DIRMODE) $(PYTHONFRAMEWORKDIR)
++	$(CC) -o $(LDLIBRARY) $(PY_CORE_LDFLAGS) -dynamiclib \
++		-all_load $(LIBRARY) \
++		-install_name $(PYTHONFRAMEWORKINSTALLNAMEPREFIX)/$(PYTHONFRAMEWORK) \
++		-compatibility_version $(VERSION) \
++		-current_version $(VERSION) \
++		-framework CoreFoundation $(LIBS);
++	$(INSTALL_DATA) $(RESSRCDIR)/Info.plist $(PYTHONFRAMEWORKDIR)/Info.plist
++
+ # This rule builds the Cygwin Python DLL and import library if configured
+ # for a shared core library; otherwise, this rule is a noop.
+ $(DLLLIBRARY) libpython$(LDVERSION).dll.a: $(LIBRARY_OBJS)
+@@ -1867,6 +1902,36 @@ testuniversal: all
+ 		$(RUNSHARED) /usr/libexec/oah/translate \
+ 			./$(BUILDPYTHON) -E -m test -j 0 -u all $(TESTOPTS)
+ 
++# Run the test suite on the iOS simulator. Must be run on a macOS machine with
++# a full Xcode install that has an iPhone SE (3rd edition) simulator available.
++# This must be run *after* a `make install` has completed the build. The
++# `--with-framework-name` argument *cannot* be used when configuring the build.
++XCFOLDER:=iOSTestbed.$(MULTIARCH).$(shell date +%s)
++.PHONY: testios
++testios:
++	@if test "$(MACHDEP)" != "ios"; then \
++		echo "Cannot run the iOS testbed for a non-iOS build."; \
++		exit 1;\
++	fi
++	@if test "$(findstring -iphonesimulator,$(MULTIARCH))" != "-iphonesimulator"; then \
++		echo "Cannot run the iOS testbed for non-simulator builds."; \
++		exit 1;\
++	fi
++	@if test $(PYTHONFRAMEWORK) != "Python"; then \
++		echo "Cannot run the iOS testbed with a non-default framework name."; \
++		exit 1;\
++	fi
++	@if ! test -d $(PYTHONFRAMEWORKPREFIX); then \
++		echo "Cannot find a finalized iOS Python.framework. Have you run 'make install' to finalize the framework build?"; \
++		exit 1;\
++	fi
++
++	# Clone the testbed project into the XCFOLDER
++	$(PYTHON_FOR_BUILD) $(srcdir)/Platforms/Apple/testbed clone --framework $(PYTHONFRAMEWORKPREFIX) "$(XCFOLDER)"
++
++	# Run the testbed project
++	$(PYTHON_FOR_BUILD) "$(XCFOLDER)" run --verbose -- test -uall --single-process --rerun -W
++
+ # Like testall, but with only one pass and without multiple processes.
+ # Run an optional script to include information about the build environment.
+ .PHONY: buildbottest
+@@ -1910,7 +1975,7 @@ multissltest: all
+ # which can lead to two parallel `./python setup.py build` processes that
+ # step on each others toes.
+ .PHONY: install
+-install: @FRAMEWORKINSTALLFIRST@ commoninstall bininstall maninstall @FRAMEWORKINSTALLLAST@
++install: @FRAMEWORKINSTALLFIRST@ @INSTALLTARGETS@ @FRAMEWORKINSTALLLAST@
+ 	if test "x$(ENSUREPIP)" != "xno"  ; then \
+ 		case $(ENSUREPIP) in \
+ 			upgrade) ensurepip="--upgrade" ;; \
+@@ -2346,6 +2411,14 @@ libinstall:	all $(srcdir)/Modules/xxmodule.c
+ 	$(INSTALL_DATA) `cat pybuilddir.txt`/_sysconfigdata_$(ABIFLAGS)_$(MACHDEP)_$(MULTIARCH).py \
+ 		$(DESTDIR)$(LIBDEST); \
+ 	$(INSTALL_DATA) $(srcdir)/LICENSE $(DESTDIR)$(LIBDEST)/LICENSE.txt
++	@ # If app store compliance has been configured, apply the patch to the
++	@ # installed library code. The patch has been previously validated against
++	@ # the original source tree, so we can ignore any errors that are raised
++	@ # due to files that are missing because of --disable-test-modules etc.
++	@if [ "$(APP_STORE_COMPLIANCE_PATCH)" != "" ]; then \
++		echo "Applying app store compliance patch"; \
++		patch --force --reject-file "$(abs_builddir)/app-store-compliance.rej" --strip 2 --directory "$(DESTDIR)$(LIBDEST)" --input "$(abs_srcdir)/$(APP_STORE_COMPLIANCE_PATCH)" || true ; \
++	fi
+ 	@ # Build PYC files for the 3 optimization levels (0, 1, 2)
+ 	-PYTHONPATH=$(DESTDIR)$(LIBDEST) $(RUNSHARED) \
+ 		$(PYTHON_FOR_BUILD) -Wi $(DESTDIR)$(LIBDEST)/compileall.py \
+@@ -2522,10 +2595,11 @@ frameworkinstall: install
+ # only have to cater for the structural bits of the framework.
+ 
+ .PHONY: frameworkinstallframework
+-frameworkinstallframework: frameworkinstallstructure install frameworkinstallmaclib
++frameworkinstallframework: @FRAMEWORKINSTALLFIRST@ install frameworkinstallmaclib
+ 
+-.PHONY: frameworkinstallstructure
+-frameworkinstallstructure:	$(LDLIBRARY)
++# macOS uses a versioned frameworks structure that includes a full install
++.PHONY: frameworkinstallversionedstructure
++frameworkinstallversionedstructure:	$(LDLIBRARY)
+ 	@if test "$(PYTHONFRAMEWORKDIR)" = no-framework; then \
+ 		echo Not configured with --enable-framework; \
+ 		exit 1; \
+@@ -2546,6 +2620,30 @@ frameworkinstallstructure:	$(LDLIBRARY)
+ 	$(LN) -fsn Versions/Current/Resources $(DESTDIR)$(PYTHONFRAMEWORKINSTALLDIR)/Resources
+ 	$(INSTALL_SHARED) $(LDLIBRARY) $(DESTDIR)$(PYTHONFRAMEWORKPREFIX)/$(LDLIBRARY)
+ 
++# iOS/tvOS/watchOS uses a non-versioned framework with Info.plist in the
++# framework root, no .lproj data, and only stub compilation assistance binaries
++.PHONY: frameworkinstallunversionedstructure
++frameworkinstallunversionedstructure:	$(LDLIBRARY)
++	@if test "$(PYTHONFRAMEWORKDIR)" = no-framework; then \
++		echo Not configured with --enable-framework; \
++		exit 1; \
++	else true; \
++	fi
++	if test -d $(DESTDIR)$(PYTHONFRAMEWORKPREFIX)/include; then \
++		echo "Clearing stale header symlink directory"; \
++		rm -rf $(DESTDIR)$(PYTHONFRAMEWORKPREFIX)/include; \
++	fi
++	$(INSTALL) -d -m $(DIRMODE) $(DESTDIR)$(PYTHONFRAMEWORKINSTALLDIR)
++	sed 's/%VERSION%/'"`$(RUNSHARED) $(PYTHON_FOR_BUILD) -c 'import platform; print(platform.python_version())'`"'/g' < $(RESSRCDIR)/Info.plist > $(DESTDIR)$(PYTHONFRAMEWORKINSTALLDIR)/Info.plist
++	$(INSTALL_SHARED) $(LDLIBRARY) $(DESTDIR)$(PYTHONFRAMEWORKPREFIX)/$(LDLIBRARY)
++	$(INSTALL) -d -m $(DIRMODE) $(DESTDIR)$(LIBDIR)
++	$(LN) -fs "../$(LDLIBRARY)" "$(DESTDIR)$(prefix)/lib/libpython$(LDVERSION).dylib"
++	$(LN) -fs "../$(LDLIBRARY)" "$(DESTDIR)$(prefix)/lib/libpython$(VERSION).dylib"
++	$(INSTALL) -d -m $(DIRMODE) $(DESTDIR)$(BINDIR)
++	for file in $(srcdir)/$(RESSRCDIR)/bin/* ; do \
++		$(INSTALL) -m $(EXEMODE) $$file $(DESTDIR)$(BINDIR); \
++	done
++
+ # This installs Mac/Lib into the framework
+ # Install a number of symlinks to keep software that expects a normal unix
+ # install (which includes python-config) happy.
+@@ -2586,6 +2684,19 @@ frameworkaltinstallunixtools:
+ frameworkinstallextras:
+ 	cd Mac && $(MAKE) installextras DESTDIR="$(DESTDIR)"
+ 
++# On iOS, bin/lib can't live inside the framework; include needs to be called
++# "Headers", but *must* be in the framework, and *not* include the `python3.X`
++# subdirectory. The install has put these folders in the same folder as
++# Python.framework; Move the headers to their final framework-compatible home.
++.PHONY: frameworkinstallmobileheaders
++frameworkinstallmobileheaders: frameworkinstallunversionedstructure inclinstall
++	if test -d $(DESTDIR)$(PYTHONFRAMEWORKINSTALLDIR)/Headers; then \
++		echo "Removing old framework headers"; \
++		rm -rf $(DESTDIR)$(PYTHONFRAMEWORKINSTALLDIR)/Headers; \
++	fi
++	mv "$(DESTDIR)$(PYTHONFRAMEWORKPREFIX)/include/python$(LDVERSION)" "$(DESTDIR)$(PYTHONFRAMEWORKINSTALLDIR)/Headers"
++	$(LN) -fs "../$(PYTHONFRAMEWORKDIR)/Headers" "$(DESTDIR)$(PYTHONFRAMEWORKPREFIX)/include/python$(LDVERSION)"
++
+ # Build the toplevel Makefile
+ Makefile.pre: $(srcdir)/Makefile.pre.in config.status
+ 	CONFIG_FILES=Makefile.pre CONFIG_HEADERS= ./config.status
+@@ -2696,6 +2807,10 @@ clean-retain-profile: pycremoval
+ 	-find build -type f -a ! -name '*.gc??' -exec rm -f {} ';'
+ 	-rm -f Include/pydtrace_probes.h
+ 	-rm -f profile-gen-stamp
++	-rm -rf Platforms/Apple/iOS/testbed/Python.xcframework/ios-*/bin
++	-rm -rf Platforms/Apple/iOS/testbed/Python.xcframework/ios-*/lib
++	-rm -rf Platforms/Apple/iOS/testbed/Python.xcframework/ios-*/include
++	-rm -rf Platforms/Apple/iOS/testbed/Python.xcframework/ios-*/Python.framework
+ 
+ .PHONY: profile-removal
+ profile-removal:
+@@ -2721,6 +2836,8 @@ clobber: clean
+ 		config.cache config.log pyconfig.h Modules/config.c
+ 	-rm -rf build platform
+ 	-rm -rf $(PYTHONFRAMEWORKDIR)
++	-rm -rf Platforms/Apple/iOS/Frameworks
++	-rm -rf iOSTestbed.*
+ 	-rm -f python-config.py python-config
+ 
+ # Make things extra clean, before making a distribution:
+@@ -2814,7 +2931,9 @@ Python/thread.o: @THREADHEADERS@ $(srcdir)/Python/condvar.h
+ 
+ # force rebuild when header file or module build flavor (static/shared) is changed
+ MODULE_DEPS_STATIC=Modules/config.c
+-MODULE_DEPS_SHARED=$(MODULE_DEPS_STATIC) $(EXPORTSYMS)
++# iOS (prototype-python-runtime): extension modules link with -framework Python, so they need
++# the framework binary first; CPython 3.13 adds the same dependency in configure.
++MODULE_DEPS_SHARED=$(MODULE_DEPS_STATIC) $(EXPORTSYMS) $(LDLIBRARY)
+ 
+ MODULE_CMATH_DEPS=$(srcdir)/Modules/_math.h
+ MODULE_MATH_DEPS=$(srcdir)/Modules/_math.h
+diff --git a/Modules/getpath.c b/Modules/getpath.c
+index 0a31000..83a2bc4 100644
+--- a/Modules/getpath.c
++++ b/Modules/getpath.c
+@@ -15,6 +15,7 @@
+ #endif
+ 
+ #ifdef __APPLE__
++#  include "TargetConditionals.h"
+ #  include <mach-o/dyld.h>
+ #endif
+ 
+@@ -759,7 +760,7 @@ library_to_dict(PyObject *dict, const char *key)
+         return winmodule_to_dict(dict, key, PyWin_DLLhModule);
+     }
+ #endif
+-#elif defined(WITH_NEXT_FRAMEWORK)
++#elif defined(WITH_NEXT_FRAMEWORK) && !defined(TARGET_OS_IPHONE)
+     static char modPath[MAXPATHLEN + 1];
+     static int modPathInitialized = -1;
+     if (modPathInitialized < 0) {
+@@ -953,4 +954,3 @@ _PyConfig_InitPathConfig(PyConfig *config, int compute_path_config)
+ 
+     return _PyStatus_OK();
+ }
+-
+diff --git a/Platforms/Apple/iOS/Resources/Info.plist.in b/Platforms/Apple/iOS/Resources/Info.plist.in
+new file mode 100644
+index 0000000..26ef7a9
+--- /dev/null
++++ b/Platforms/Apple/iOS/Resources/Info.plist.in
+@@ -0,0 +1,34 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<!DOCTYPE plist SYSTEM "file://localhost/System/Library/DTDs/PropertyList.dtd">
++<plist version="0.9">
++<dict>
++	<key>CFBundleDevelopmentRegion</key>
++	<string>en</string>
++	<key>CFBundleExecutable</key>
++	<string>Python</string>
++	<key>CFBundleGetInfoString</key>
++	<string>Python Runtime and Library</string>
++	<key>CFBundleIdentifier</key>
++	<string>@PYTHONFRAMEWORKIDENTIFIER@</string>
++	<key>CFBundleInfoDictionaryVersion</key>
++	<string>6.0</string>
++	<key>CFBundleName</key>
++	<string>Python</string>
++	<key>CFBundlePackageType</key>
++	<string>FMWK</string>
++	<key>CFBundleShortVersionString</key>
++	<string>%VERSION%</string>
++	<key>CFBundleLongVersionString</key>
++	<string>%VERSION%, (c) 2001-2024 Python Software Foundation.</string>
++	<key>CFBundleSignature</key>
++	<string>????</string>
++	<key>CFBundleVersion</key>
++	<string>%VERSION%</string>
++	<key>CFBundleSupportedPlatforms</key>
++	<array>
++		<string>iPhoneOS</string>
++	</array>
++	<key>MinimumOSVersion</key>
++	<string>@IPHONEOS_DEPLOYMENT_TARGET@</string>
++</dict>
++</plist>
+diff --git a/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-ar b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-ar
+new file mode 100755
+index 0000000..3cf3eb2
+--- /dev/null
++++ b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-ar
+@@ -0,0 +1,2 @@
++#!/bin/sh
++xcrun --sdk iphoneos${IOS_SDK_VERSION} ar "$@"
+diff --git a/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-clang b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-clang
+new file mode 100755
+index 0000000..f50d5b5
+--- /dev/null
++++ b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-clang
+@@ -0,0 +1,2 @@
++#!/bin/sh
++xcrun --sdk iphoneos${IOS_SDK_VERSION} clang -target arm64-apple-ios${IPHONEOS_DEPLOYMENT_TARGET} "$@"
+diff --git a/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-clang++ b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-clang++
+new file mode 100755
+index 0000000..0794731
+--- /dev/null
++++ b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-clang++
+@@ -0,0 +1,2 @@
++#!/bin/sh
++xcrun --sdk iphoneos${IOS_SDK_VERSION} clang++ -target arm64-apple-ios${IPHONEOS_DEPLOYMENT_TARGET} "$@"
+diff --git a/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-cpp b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-cpp
+new file mode 100755
+index 0000000..24fa150
+--- /dev/null
++++ b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-cpp
+@@ -0,0 +1,2 @@
++#!/bin/sh
++xcrun --sdk iphoneos${IOS_SDK_VERSION} clang -target arm64-apple-ios${IPHONEOS_DEPLOYMENT_TARGET} -E "$@"
+diff --git a/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-simulator-ar b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-simulator-ar
+new file mode 100755
+index 0000000..b836b6d
+--- /dev/null
++++ b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-simulator-ar
+@@ -0,0 +1,2 @@
++#!/bin/sh
++xcrun --sdk iphonesimulator${IOS_SDK_VERSION} ar "$@"
+diff --git a/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-simulator-clang b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-simulator-clang
+new file mode 100755
+index 0000000..4891a00
+--- /dev/null
++++ b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-simulator-clang
+@@ -0,0 +1,2 @@
++#!/bin/sh
++xcrun --sdk iphonesimulator${IOS_SDK_VERSION} clang -target arm64-apple-ios${IPHONEOS_DEPLOYMENT_TARGET}-simulator "$@"
+diff --git a/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-simulator-clang++ b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-simulator-clang++
+new file mode 100755
+index 0000000..58b2a5f
+--- /dev/null
++++ b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-simulator-clang++
+@@ -0,0 +1,2 @@
++#!/bin/sh
++xcrun --sdk iphonesimulator${IOS_SDK_VERSION} clang++ -target arm64-apple-ios${IPHONEOS_DEPLOYMENT_TARGET}-simulator "$@"
+diff --git a/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-simulator-cpp b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-simulator-cpp
+new file mode 100755
+index 0000000..c9df94e
+--- /dev/null
++++ b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-simulator-cpp
+@@ -0,0 +1,2 @@
++#!/bin/sh
++xcrun --sdk iphonesimulator${IOS_SDK_VERSION} clang -target arm64-apple-ios${IPHONEOS_DEPLOYMENT_TARGET}-simulator -E "$@"
+diff --git a/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-simulator-strip b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-simulator-strip
+new file mode 100755
+index 0000000..fd59d30
+--- /dev/null
++++ b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-simulator-strip
+@@ -0,0 +1,2 @@
++#!/bin/sh
++xcrun --sdk iphonesimulator${IOS_SDK_VERSION} strip -arch arm64 "$@"
+diff --git a/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-strip b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-strip
+new file mode 100755
+index 0000000..75e823a
+--- /dev/null
++++ b/Platforms/Apple/iOS/Resources/bin/arm64-apple-ios-strip
+@@ -0,0 +1,2 @@
++#!/bin/sh
++xcrun --sdk iphoneos${IOS_SDK_VERSION} strip -arch arm64 "$@"
+diff --git a/Platforms/Apple/iOS/Resources/bin/x86_64-apple-ios-simulator-ar b/Platforms/Apple/iOS/Resources/bin/x86_64-apple-ios-simulator-ar
+new file mode 100755
+index 0000000..b836b6d
+--- /dev/null
++++ b/Platforms/Apple/iOS/Resources/bin/x86_64-apple-ios-simulator-ar
+@@ -0,0 +1,2 @@
++#!/bin/sh
++xcrun --sdk iphonesimulator${IOS_SDK_VERSION} ar "$@"
+diff --git a/Platforms/Apple/iOS/Resources/bin/x86_64-apple-ios-simulator-clang b/Platforms/Apple/iOS/Resources/bin/x86_64-apple-ios-simulator-clang
+new file mode 100755
+index 0000000..f4739a7
+--- /dev/null
++++ b/Platforms/Apple/iOS/Resources/bin/x86_64-apple-ios-simulator-clang
+@@ -0,0 +1,2 @@
++#!/bin/sh
++xcrun --sdk iphonesimulator${IOS_SDK_VERSION} clang -target x86_64-apple-ios${IPHONEOS_DEPLOYMENT_TARGET}-simulator "$@"
+diff --git a/Platforms/Apple/iOS/Resources/bin/x86_64-apple-ios-simulator-clang++ b/Platforms/Apple/iOS/Resources/bin/x86_64-apple-ios-simulator-clang++
+new file mode 100755
+index 0000000..c348ae4
+--- /dev/null
++++ b/Platforms/Apple/iOS/Resources/bin/x86_64-apple-ios-simulator-clang++
+@@ -0,0 +1,2 @@
++#!/bin/sh
++xcrun --sdk iphonesimulator${IOS_SDK_VERSION} clang++ -target x86_64-apple-ios${IPHONEOS_DEPLOYMENT_TARGET}-simulator "$@"
+diff --git a/Platforms/Apple/iOS/Resources/bin/x86_64-apple-ios-simulator-cpp b/Platforms/Apple/iOS/Resources/bin/x86_64-apple-ios-simulator-cpp
+new file mode 100755
+index 0000000..6d7f808
+--- /dev/null
++++ b/Platforms/Apple/iOS/Resources/bin/x86_64-apple-ios-simulator-cpp
+@@ -0,0 +1,2 @@
++#!/bin/sh
++xcrun --sdk iphonesimulator${IOS_SDK_VERSION} clang -target x86_64-apple-ios${IPHONEOS_DEPLOYMENT_TARGET}-simulator -E "$@"
+diff --git a/Platforms/Apple/iOS/Resources/bin/x86_64-apple-ios-simulator-strip b/Platforms/Apple/iOS/Resources/bin/x86_64-apple-ios-simulator-strip
+new file mode 100755
+index 0000000..c5cfb28
+--- /dev/null
++++ b/Platforms/Apple/iOS/Resources/bin/x86_64-apple-ios-simulator-strip
+@@ -0,0 +1,2 @@
++#!/bin/sh
++xcrun --sdk iphonesimulator${IOS_SDK_VERSION} strip -arch x86_64 "$@"
+diff --git a/Platforms/Apple/iOS/Resources/pyconfig.h b/Platforms/Apple/iOS/Resources/pyconfig.h
+new file mode 100644
+index 0000000..4acff2c
+--- /dev/null
++++ b/Platforms/Apple/iOS/Resources/pyconfig.h
+@@ -0,0 +1,7 @@
++#ifdef __arm64__
++#include "pyconfig-arm64.h"
++#endif
++
++#ifdef __x86_64__
++#include "pyconfig-x86_64.h"
++#endif
+diff --git a/Python/marshal.c b/Python/marshal.c
+index 3fc3f89..892debe 100644
+--- a/Python/marshal.c
++++ b/Python/marshal.c
+@@ -16,6 +16,10 @@
+ #include "marshal.h"              // Py_MARSHAL_VERSION
+ #include "pycore_pystate.h"          // _PyInterpreterState_GET()
+ 
++#ifdef __APPLE__
++#  include "TargetConditionals.h"
++#endif /* __APPLE__ */
++
+ /*[clinic input]
+ module marshal
+ [clinic start generated code]*/
+@@ -35,11 +39,14 @@ module marshal
+  * #if defined(MS_WINDOWS) && defined(_DEBUG)
+  */
+ #if defined(MS_WINDOWS)
+-#define MAX_MARSHAL_STACK_DEPTH 1000
++#  define MAX_MARSHAL_STACK_DEPTH 1000
+ #elif defined(__wasi__)
+-#define MAX_MARSHAL_STACK_DEPTH 1500
++#  define MAX_MARSHAL_STACK_DEPTH 1500
++// TARGET_OS_IPHONE covers any non-macOS Apple platform.
++#elif defined(__APPLE__) && TARGET_OS_IPHONE
++#  define MAX_MARSHAL_STACK_DEPTH 1500
+ #else
+-#define MAX_MARSHAL_STACK_DEPTH 2000
++#  define MAX_MARSHAL_STACK_DEPTH 2000
+ #endif
+ 
+ #define TYPE_NULL               '0'
+diff --git a/Python/pylifecycle.c b/Python/pylifecycle.c
+index f5bea14..e925827 100644
+--- a/Python/pylifecycle.c
++++ b/Python/pylifecycle.c
+@@ -34,7 +34,21 @@
+ #include <stdlib.h>               // getenv()
+ 
+ #if defined(__APPLE__)
+-#include <mach-o/loader.h>
++#  include <AvailabilityMacros.h>
++#  include <TargetConditionals.h>
++#  include <mach-o/loader.h>
++// The os_log unified logging APIs were introduced in macOS 10.12, iOS 10.0,
++// tvOS 10.0, and watchOS 3.0; we enable the use of the system logger
++// automatically on non-macOS platforms.
++#  if defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE
++#    define USE_APPLE_SYSTEM_LOG 1
++#  else
++#    define USE_APPLE_SYSTEM_LOG 0
++#  endif
++
++#  if USE_APPLE_SYSTEM_LOG
++#    include <os/log.h>
++#  endif
+ #endif
+ 
+ #ifdef HAVE_SIGNAL_H
+@@ -66,6 +80,9 @@ static PyStatus add_main_module(PyInterpreterState *interp);
+ static PyStatus init_import_site(void);
+ static PyStatus init_set_builtins_open(void);
+ static PyStatus init_sys_streams(PyThreadState *tstate);
++#if defined(__APPLE__) && USE_APPLE_SYSTEM_LOG
++static PyStatus init_apple_streams(PyThreadState *tstate);
++#endif
+ static void wait_for_thread_shutdown(PyThreadState *tstate);
+ static void call_ll_exitfuncs(_PyRuntimeState *runtime);
+ 
+@@ -1182,6 +1199,17 @@ init_interp_main(PyThreadState *tstate)
+         return status;
+     }
+ 
++#if defined(__APPLE__) && USE_APPLE_SYSTEM_LOG
++    status = init_apple_streams(tstate);
++    if (_PyStatus_EXCEPTION(status)) {
++        return status;
++    }
++#endif
++
++#ifdef Py_DEBUG
++    run_presite(tstate);
++#endif
++
+     status = add_main_module(interp);
+     if (_PyStatus_EXCEPTION(status)) {
+         return status;
+@@ -2641,6 +2669,71 @@ init_sys_streams(PyThreadState *tstate)
+     return res;
+ }
+ 
++#if defined(__APPLE__) && USE_APPLE_SYSTEM_LOG
++
++static PyObject *
++apple_log_write_impl(PyObject *self, PyObject *args)
++{
++    int logtype = 0;
++    const char *text = NULL;
++    if (!PyArg_ParseTuple(args, "iy", &logtype, &text)) {
++        return NULL;
++    }
++
++    // Pass the user-provided text through explicit %s formatting
++    // to avoid % literals being interpreted as a formatting directive.
++    // Using {public} ensures "dynamic" string messages are visible
++    // in the log without special configuration.
++    os_log_with_type(OS_LOG_DEFAULT, logtype, "%{public}s", text);
++    Py_RETURN_NONE;
++}
++
++
++static PyMethodDef apple_log_write_method = {
++    "apple_log_write", apple_log_write_impl, METH_VARARGS
++};
++
++
++static PyStatus
++init_apple_streams(PyThreadState *tstate)
++{
++    PyStatus status = _PyStatus_OK();
++    PyObject *_apple_support = NULL;
++    PyObject *apple_log_write = NULL;
++    PyObject *result = NULL;
++
++    _apple_support = PyImport_ImportModule("_apple_support");
++    if (_apple_support == NULL) {
++        goto error;
++    }
++
++    apple_log_write = PyCFunction_New(&apple_log_write_method, NULL);
++    if (apple_log_write == NULL) {
++        goto error;
++    }
++
++    // Initialize the logging streams, sending stdout -> Default; stderr -> Error
++    result = PyObject_CallMethod(
++        _apple_support, "init_streams", "Oii",
++        apple_log_write, OS_LOG_TYPE_DEFAULT, OS_LOG_TYPE_ERROR);
++    if (result == NULL) {
++        goto error;
++    }
++    goto done;
++
++error:
++    _PyErr_Print(tstate);
++    status = _PyStatus_ERR("failed to initialize Apple log streams");
++
++done:
++    Py_XDECREF(result);
++    Py_XDECREF(apple_log_write);
++    Py_XDECREF(_apple_support);
++    return status;
++}
++
++#endif  // __APPLE__ && USE_APPLE_SYSTEM_LOG
++
+ 
+ static void
+ _Py_FatalError_DumpTracebacks(int fd, PyInterpreterState *interp,
+diff --git a/Python/stdlib_module_names.h b/Python/stdlib_module_names.h
+index 1b1a1bd..a37f531 100644
+--- a/Python/stdlib_module_names.h
++++ b/Python/stdlib_module_names.h
+@@ -5,6 +5,7 @@ static const char* _Py_stdlib_module_names[] = {
+ "__future__",
+ "_abc",
+ "_aix_support",
++"_apple_support",
+ "_ast",
+ "_asyncio",
+ "_bisect",
+@@ -39,6 +40,7 @@ static const char* _Py_stdlib_module_names[] = {
+ "_heapq",
+ "_imp",
+ "_io",
++"_ios_support",
+ "_json",
+ "_locale",
+ "_lsprof",
+diff --git a/config.sub b/config.sub
+index d74fb6d..1bb6a05 100755
+--- a/config.sub
++++ b/config.sub
+@@ -1,14 +1,15 @@
+ #! /bin/sh
+ # Configuration validation subroutine script.
+-#   Copyright 1992-2021 Free Software Foundation, Inc.
++#   Copyright 1992-2024 Free Software Foundation, Inc.
+ 
+ # shellcheck disable=SC2006,SC2268 # see below for rationale
+ 
+-timestamp='2021-08-14'
++# Patched 2024-02-03 to include support for arm64_32 and iOS/tvOS/watchOS simulators
++timestamp='2024-01-01'
+ 
+ # This file is free software; you can redistribute it and/or modify it
+ # under the terms of the GNU General Public License as published by
+-# the Free Software Foundation; either version 3 of the License, or
++# the Free Software Foundation, either version 3 of the License, or
+ # (at your option) any later version.
+ #
+ # This program is distributed in the hope that it will be useful, but
+@@ -76,13 +77,13 @@ Report bugs and patches to <config-patches@gnu.org>."
+ version="\
+ GNU config.sub ($timestamp)
+ 
+-Copyright 1992-2021 Free Software Foundation, Inc.
++Copyright 1992-2024 Free Software Foundation, Inc.
+ 
+ This is free software; see the source for copying conditions.  There is NO
+ warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE."
+ 
+ help="
+-Try \`$me --help' for more information."
++Try '$me --help' for more information."
+ 
+ # Parse command line
+ while test $# -gt 0 ; do
+@@ -130,7 +131,7 @@ IFS=$saved_IFS
+ # Separate into logical components for further validation
+ case $1 in
+ 	*-*-*-*-*)
+-		echo Invalid configuration \`"$1"\': more than four components >&2
++		echo "Invalid configuration '$1': more than four components" >&2
+ 		exit 1
+ 		;;
+ 	*-*-*-*)
+@@ -145,7 +146,8 @@ case $1 in
+ 			nto-qnx* | linux-* | uclinux-uclibc* \
+ 			| uclinux-gnu* | kfreebsd*-gnu* | knetbsd*-gnu* | netbsd*-gnu* \
+ 			| netbsd*-eabi* | kopensolaris*-gnu* | cloudabi*-eabi* \
+-			| storm-chaos* | os2-emx* | rtmk-nova*)
++			| storm-chaos* | os2-emx* | rtmk-nova* | managarm-* \
++			| windows-* )
+ 				basic_machine=$field1
+ 				basic_os=$maybe_os
+ 				;;
+@@ -943,7 +945,7 @@ $basic_machine
+ EOF
+ 		IFS=$saved_IFS
+ 		;;
+-	# We use `pc' rather than `unknown'
++	# We use 'pc' rather than 'unknown'
+ 	# because (1) that's what they normally are, and
+ 	# (2) the word "unknown" tends to confuse beginning users.
+ 	i*86 | x86_64)
+@@ -1020,6 +1022,11 @@ case $cpu-$vendor in
+ 		;;
+ 
+ 	# Here we normalize CPU types with a missing or matching vendor
++	armh-unknown | armh-alt)
++		cpu=armv7l
++		vendor=alt
++		basic_os=${basic_os:-linux-gnueabihf}
++		;;
+ 	dpx20-unknown | dpx20-bull)
+ 		cpu=rs6000
+ 		vendor=bull
+@@ -1070,7 +1077,7 @@ case $cpu-$vendor in
+ 	pentium-* | p5-* | k5-* | k6-* | nexgen-* | viac3-*)
+ 		cpu=i586
+ 		;;
+-	pentiumpro-* | p6-* | 6x86-* | athlon-* | athalon_*-*)
++	pentiumpro-* | p6-* | 6x86-* | athlon-* | athlon_*-*)
+ 		cpu=i686
+ 		;;
+ 	pentiumii-* | pentium2-* | pentiumiii-* | pentium3-*)
+@@ -1121,7 +1128,7 @@ case $cpu-$vendor in
+ 	xscale-* | xscalee[bl]-*)
+ 		cpu=`echo "$cpu" | sed 's/^xscale/arm/'`
+ 		;;
+-	arm64-*)
++	arm64-* | aarch64le-* | arm64_32-*)
+ 		cpu=aarch64
+ 		;;
+ 
+@@ -1175,7 +1182,7 @@ case $cpu-$vendor in
+ 		case $cpu in
+ 			1750a | 580 \
+ 			| a29k \
+-			| aarch64 | aarch64_be \
++			| aarch64 | aarch64_be | aarch64c | arm64ec \
+ 			| abacus \
+ 			| alpha | alphaev[4-8] | alphaev56 | alphaev6[78] \
+ 			| alpha64 | alpha64ev[4-8] | alpha64ev56 | alpha64ev6[78] \
+@@ -1194,50 +1201,29 @@ case $cpu-$vendor in
+ 			| d10v | d30v | dlx | dsp16xx \
+ 			| e2k | elxsi | epiphany \
+ 			| f30[01] | f700 | fido | fr30 | frv | ft32 | fx80 \
++			| javascript \
+ 			| h8300 | h8500 \
+ 			| hppa | hppa1.[01] | hppa2.0 | hppa2.0[nw] | hppa64 \
+ 			| hexagon \
+ 			| i370 | i*86 | i860 | i960 | ia16 | ia64 \
+ 			| ip2k | iq2000 \
+ 			| k1om \
++			| kvx \
+ 			| le32 | le64 \
+ 			| lm32 \
+-			| loongarch32 | loongarch64 | loongarchx32 \
++			| loongarch32 | loongarch64 \
+ 			| m32c | m32r | m32rle \
+ 			| m5200 | m68000 | m680[012346]0 | m68360 | m683?2 | m68k \
+ 			| m6811 | m68hc11 | m6812 | m68hc12 | m68hcs12x \
+ 			| m88110 | m88k | maxq | mb | mcore | mep | metag \
+ 			| microblaze | microblazeel \
+-			| mips | mipsbe | mipseb | mipsel | mipsle \
+-			| mips16 \
+-			| mips64 | mips64eb | mips64el \
+-			| mips64octeon | mips64octeonel \
+-			| mips64orion | mips64orionel \
+-			| mips64r5900 | mips64r5900el \
+-			| mips64vr | mips64vrel \
+-			| mips64vr4100 | mips64vr4100el \
+-			| mips64vr4300 | mips64vr4300el \
+-			| mips64vr5000 | mips64vr5000el \
+-			| mips64vr5900 | mips64vr5900el \
+-			| mipsisa32 | mipsisa32el \
+-			| mipsisa32r2 | mipsisa32r2el \
+-			| mipsisa32r3 | mipsisa32r3el \
+-			| mipsisa32r5 | mipsisa32r5el \
+-			| mipsisa32r6 | mipsisa32r6el \
+-			| mipsisa64 | mipsisa64el \
+-			| mipsisa64r2 | mipsisa64r2el \
+-			| mipsisa64r3 | mipsisa64r3el \
+-			| mipsisa64r5 | mipsisa64r5el \
+-			| mipsisa64r6 | mipsisa64r6el \
+-			| mipsisa64sb1 | mipsisa64sb1el \
+-			| mipsisa64sr71k | mipsisa64sr71kel \
+-			| mipsr5900 | mipsr5900el \
+-			| mipstx39 | mipstx39el \
++			| mips* \
+ 			| mmix \
+ 			| mn10200 | mn10300 \
+ 			| moxie \
+ 			| mt \
+ 			| msp430 \
++			| nanomips* \
+ 			| nds32 | nds32le | nds32be \
+ 			| nfp \
+ 			| nios | nios2 | nios2eb | nios2el \
+@@ -1269,6 +1255,7 @@ case $cpu-$vendor in
+ 			| ubicom32 \
+ 			| v70 | v850 | v850e | v850e1 | v850es | v850e2 | v850e2v3 \
+ 			| vax \
++			| vc4 \
+ 			| visium \
+ 			| w65 \
+ 			| wasm32 | wasm64 \
+@@ -1280,7 +1267,7 @@ case $cpu-$vendor in
+ 				;;
+ 
+ 			*)
+-				echo Invalid configuration \`"$1"\': machine \`"$cpu-$vendor"\' not recognized 1>&2
++				echo "Invalid configuration '$1': machine '$cpu-$vendor' not recognized" 1>&2
+ 				exit 1
+ 				;;
+ 		esac
+@@ -1301,11 +1288,12 @@ esac
+ 
+ # Decode manufacturer-specific aliases for certain operating systems.
+ 
+-if test x$basic_os != x
++if test x"$basic_os" != x
+ then
+ 
+-# First recognize some ad-hoc caes, or perhaps split kernel-os, or else just
++# First recognize some ad-hoc cases, or perhaps split kernel-os, or else just
+ # set os.
++obj=
+ case $basic_os in
+ 	gnu/linux*)
+ 		kernel=linux
+@@ -1336,6 +1324,10 @@ EOF
+ 		kernel=linux
+ 		os=`echo "$basic_os" | sed -e 's|linux|gnu|'`
+ 		;;
++	managarm*)
++		kernel=managarm
++		os=`echo "$basic_os" | sed -e 's|managarm|mlibc|'`
++		;;
+ 	*)
+ 		kernel=
+ 		os=$basic_os
+@@ -1501,10 +1493,16 @@ case $os in
+ 			os=eabi
+ 			;;
+ 		    *)
+-			os=elf
++			os=
++			obj=elf
+ 			;;
+ 		esac
+ 		;;
++	aout* | coff* | elf* | pe*)
++		# These are machine code file formats, not OSes
++		obj=$os
++		os=
++		;;
+ 	*)
+ 		# No normalization, but not necessarily accepted, that comes below.
+ 		;;
+@@ -1523,12 +1521,15 @@ else
+ # system, and we'll never get to this point.
+ 
+ kernel=
++obj=
+ case $cpu-$vendor in
+ 	score-*)
+-		os=elf
++		os=
++		obj=elf
+ 		;;
+ 	spu-*)
+-		os=elf
++		os=
++		obj=elf
+ 		;;
+ 	*-acorn)
+ 		os=riscix1.2
+@@ -1538,28 +1539,35 @@ case $cpu-$vendor in
+ 		os=gnu
+ 		;;
+ 	arm*-semi)
+-		os=aout
++		os=
++		obj=aout
+ 		;;
+ 	c4x-* | tic4x-*)
+-		os=coff
++		os=
++		obj=coff
+ 		;;
+ 	c8051-*)
+-		os=elf
++		os=
++		obj=elf
+ 		;;
+ 	clipper-intergraph)
+ 		os=clix
+ 		;;
+ 	hexagon-*)
+-		os=elf
++		os=
++		obj=elf
+ 		;;
+ 	tic54x-*)
+-		os=coff
++		os=
++		obj=coff
+ 		;;
+ 	tic55x-*)
+-		os=coff
++		os=
++		obj=coff
+ 		;;
+ 	tic6x-*)
+-		os=coff
++		os=
++		obj=coff
+ 		;;
+ 	# This must come before the *-dec entry.
+ 	pdp10-*)
+@@ -1581,19 +1589,24 @@ case $cpu-$vendor in
+ 		os=sunos3
+ 		;;
+ 	m68*-cisco)
+-		os=aout
++		os=
++		obj=aout
+ 		;;
+ 	mep-*)
+-		os=elf
++		os=
++		obj=elf
+ 		;;
+ 	mips*-cisco)
+-		os=elf
++		os=
++		obj=elf
+ 		;;
+-	mips*-*)
+-		os=elf
++	mips*-*|nanomips*-*)
++		os=
++		obj=elf
+ 		;;
+ 	or32-*)
+-		os=coff
++		os=
++		obj=coff
+ 		;;
+ 	*-tti)	# must be before sparc entry or we get the wrong os.
+ 		os=sysv3
+@@ -1602,7 +1615,8 @@ case $cpu-$vendor in
+ 		os=sunos4.1.1
+ 		;;
+ 	pru-*)
+-		os=elf
++		os=
++		obj=elf
+ 		;;
+ 	*-be)
+ 		os=beos
+@@ -1683,10 +1697,12 @@ case $cpu-$vendor in
+ 		os=uxpv
+ 		;;
+ 	*-rom68k)
+-		os=coff
++		os=
++		obj=coff
+ 		;;
+ 	*-*bug)
+-		os=coff
++		os=
++		obj=coff
+ 		;;
+ 	*-apple)
+ 		os=macos
+@@ -1704,10 +1720,11 @@ esac
+ 
+ fi
+ 
+-# Now, validate our (potentially fixed-up) OS.
++# Now, validate our (potentially fixed-up) individual pieces (OS, OBJ).
++
+ case $os in
+ 	# Sometimes we do "kernel-libc", so those need to count as OSes.
+-	musl* | newlib* | relibc* | uclibc*)
++	llvm* | musl* | newlib* | relibc* | uclibc*)
+ 		;;
+ 	# Likewise for "kernel-abi"
+ 	eabi* | gnueabi*)
+@@ -1715,6 +1732,9 @@ case $os in
+ 	# VxWorks passes extra cpu info in the 4th filed.
+ 	simlinux | simwindows | spe)
+ 		;;
++	# See `case $cpu-$os` validation below
++	ghcjs)
++		;;
+ 	# Now accept the basic system types.
+ 	# The portable systems comes first.
+ 	# Each alternative MUST end in a * to match a version number.
+@@ -1723,7 +1743,7 @@ case $os in
+ 	     | hpux* | unos* | osf* | luna* | dgux* | auroraux* | solaris* \
+ 	     | sym* |  plan9* | psp* | sim* | xray* | os68k* | v88r* \
+ 	     | hiux* | abug | nacl* | netware* | windows* \
+-	     | os9* | macos* | osx* | ios* \
++	     | os9* | macos* | osx* | ios* | tvos* | watchos* \
+ 	     | mpw* | magic* | mmixware* | mon960* | lnews* \
+ 	     | amigaos* | amigados* | msdos* | newsos* | unicos* | aof* \
+ 	     | aos* | aros* | cloudabi* | sortix* | twizzler* \
+@@ -1732,11 +1752,11 @@ case $os in
+ 	     | mirbsd* | netbsd* | dicos* | openedition* | ose* \
+ 	     | bitrig* | openbsd* | secbsd* | solidbsd* | libertybsd* | os108* \
+ 	     | ekkobsd* | freebsd* | riscix* | lynxos* | os400* \
+-	     | bosx* | nextstep* | cxux* | aout* | elf* | oabi* \
+-	     | ptx* | coff* | ecoff* | winnt* | domain* | vsta* \
++	     | bosx* | nextstep* | cxux* | oabi* \
++	     | ptx* | ecoff* | winnt* | domain* | vsta* \
+ 	     | udi* | lites* | ieee* | go32* | aux* | hcos* \
+ 	     | chorusrdb* | cegcc* | glidix* | serenity* \
+-	     | cygwin* | msys* | pe* | moss* | proelf* | rtems* \
++	     | cygwin* | msys* | moss* | proelf* | rtems* \
+ 	     | midipix* | mingw32* | mingw64* | mint* \
+ 	     | uxpv* | beos* | mpeix* | udk* | moxiebox* \
+ 	     | interix* | uwin* | mks* | rhapsody* | darwin* \
+@@ -1748,49 +1768,119 @@ case $os in
+ 	     | skyos* | haiku* | rdos* | toppers* | drops* | es* \
+ 	     | onefs* | tirtos* | phoenix* | fuchsia* | redox* | bme* \
+ 	     | midnightbsd* | amdhsa* | unleashed* | emscripten* | wasi* \
+-	     | nsk* | powerunix* | genode* | zvmoe* | qnx* | emx* | zephyr*)
++	     | nsk* | powerunix* | genode* | zvmoe* | qnx* | emx* | zephyr* \
++	     | fiwix* | mlibc* | cos* | mbr* | ironclad* )
+ 		;;
+ 	# This one is extra strict with allowed versions
+ 	sco3.2v2 | sco3.2v[4-9]* | sco5v6*)
+ 		# Don't forget version if it is 3.2v4 or newer.
+ 		;;
++	# This refers to builds using the UEFI calling convention
++	# (which depends on the architecture) and PE file format.
++	# Note that this is both a different calling convention and
++	# different file format than that of GNU-EFI
++	# (x86_64-w64-mingw32).
++	uefi)
++		;;
+ 	none)
+ 		;;
++	kernel* | msvc* )
++		# Restricted further below
++		;;
++	'')
++		if test x"$obj" = x
++		then
++			echo "Invalid configuration '$1': Blank OS only allowed with explicit machine code file format" 1>&2
++		fi
++		;;
+ 	*)
+-		echo Invalid configuration \`"$1"\': OS \`"$os"\' not recognized 1>&2
++		echo "Invalid configuration '$1': OS '$os' not recognized" 1>&2
++		exit 1
++		;;
++esac
++
++case $obj in
++	aout* | coff* | elf* | pe*)
++		;;
++	'')
++		# empty is fine
++		;;
++	*)
++		echo "Invalid configuration '$1': Machine code format '$obj' not recognized" 1>&2
++		exit 1
++		;;
++esac
++
++# Here we handle the constraint that a (synthetic) cpu and os are
++# valid only in combination with each other and nowhere else.
++case $cpu-$os in
++	# The "javascript-unknown-ghcjs" triple is used by GHC; we
++	# accept it here in order to tolerate that, but reject any
++	# variations.
++	javascript-ghcjs)
++		;;
++	javascript-* | *-ghcjs)
++		echo "Invalid configuration '$1': cpu '$cpu' is not valid with os '$os$obj'" 1>&2
+ 		exit 1
+ 		;;
+ esac
+ 
+ # As a final step for OS-related things, validate the OS-kernel combination
+ # (given a valid OS), if there is a kernel.
+-case $kernel-$os in
+-	linux-gnu* | linux-dietlibc* | linux-android* | linux-newlib* \
+-		   | linux-musl* | linux-relibc* | linux-uclibc* )
++case $kernel-$os-$obj in
++	linux-gnu*- | linux-android*- | linux-dietlibc*- | linux-llvm*- \
++		    | linux-mlibc*- | linux-musl*- | linux-newlib*- \
++		    | linux-relibc*- | linux-uclibc*- )
++		;;
++	uclinux-uclibc*- )
+ 		;;
+-	uclinux-uclibc* )
++	managarm-mlibc*- | managarm-kernel*- )
+ 		;;
+-	-dietlibc* | -newlib* | -musl* | -relibc* | -uclibc* )
++	windows*-msvc*-)
++		;;
++	-dietlibc*- | -llvm*- | -mlibc*- | -musl*- | -newlib*- | -relibc*- \
++		    | -uclibc*- )
+ 		# These are just libc implementations, not actual OSes, and thus
+ 		# require a kernel.
+-		echo "Invalid configuration \`$1': libc \`$os' needs explicit kernel." 1>&2
++		echo "Invalid configuration '$1': libc '$os' needs explicit kernel." 1>&2
+ 		exit 1
+ 		;;
+-	kfreebsd*-gnu* | kopensolaris*-gnu*)
++	-kernel*- )
++		echo "Invalid configuration '$1': '$os' needs explicit kernel." 1>&2
++		exit 1
+ 		;;
+-	vxworks-simlinux | vxworks-simwindows | vxworks-spe)
++	*-kernel*- )
++		echo "Invalid configuration '$1': '$kernel' does not support '$os'." 1>&2
++		exit 1
+ 		;;
+-	nto-qnx*)
++	*-msvc*- )
++		echo "Invalid configuration '$1': '$os' needs 'windows'." 1>&2
++		exit 1
+ 		;;
+-	os2-emx)
++	kfreebsd*-gnu*- | kopensolaris*-gnu*-)
+ 		;;
+-	*-eabi* | *-gnueabi*)
++	vxworks-simlinux- | vxworks-simwindows- | vxworks-spe-)
+ 		;;
+-	-*)
++	nto-qnx*-)
++		;;
++	os2-emx-)
++		;;
++	*-eabi*- | *-gnueabi*-)
++		;;
++	ios*-simulator- | tvos*-simulator- | watchos*-simulator- )
++		;;
++	none--*)
++		# None (no kernel, i.e. freestanding / bare metal),
++		# can be paired with an machine code file format
++		;;
++	-*-)
+ 		# Blank kernel with real OS is always fine.
+ 		;;
+-	*-*)
+-		echo "Invalid configuration \`$1': Kernel \`$kernel' not known to work with OS \`$os'." 1>&2
++	--*)
++		# Blank kernel and OS with real machine code file format is always fine.
++		;;
++	*-*-*)
++		echo "Invalid configuration '$1': Kernel '$kernel' not known to work with OS '$os'." 1>&2
+ 		exit 1
+ 		;;
+ esac
+@@ -1873,7 +1963,7 @@ case $vendor in
+ 		;;
+ esac
+ 
+-echo "$cpu-$vendor-${kernel:+$kernel-}$os"
++echo "$cpu-$vendor${kernel:+-$kernel}${os:+-$os}${obj:+-$obj}"
+ exit
+ 
+ # Local variables:
+diff --git a/configure.ac b/configure.ac
+index 6db95d9..ba921b2 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -315,6 +315,161 @@ if test "$with_pkg_config" = yes -a -z "$PKG_CONFIG"; then
+   AC_MSG_ERROR([pkg-config is required])]
+ fi
+ 
++# Set name for machine-dependent library files
++AC_ARG_VAR([MACHDEP], [name for machine-dependent library files])
++AC_MSG_CHECKING([MACHDEP])
++if test -z "$MACHDEP"
++then
++    # avoid using uname for cross builds
++    if test "$cross_compiling" = yes; then
++       # ac_sys_system and ac_sys_release are used for setting
++       # a lot of different things including 'define_xopen_source'
++       # in the case statement below.
++	case "$host" in
++	*-*-linux-android*)
++		ac_sys_system=Linux-android
++		;;
++	*-*-linux*)
++		ac_sys_system=Linux
++		;;
++	*-*-cygwin*)
++		ac_sys_system=Cygwin
++		;;
++	*-apple-ios*)
++		ac_sys_system=iOS
++		;;
++	*-apple-tvos*)
++		ac_sys_system=tvOS
++		;;
++	*-apple-watchos*)
++		ac_sys_system=watchOS
++		;;
++	*-*-vxworks*)
++	    ac_sys_system=VxWorks
++	    ;;
++	*-*-emscripten)
++	    ac_sys_system=Emscripten
++	    ;;
++	*-*-wasi)
++	    ac_sys_system=WASI
++	    ;;
++	*)
++		# for now, limit cross builds to known configurations
++		MACHDEP="unknown"
++		AC_MSG_ERROR([cross build not supported for $host])
++	esac
++	ac_sys_release=
++    else
++	ac_sys_system=`uname -s`
++	if test "$ac_sys_system" = "AIX" \
++	-o "$ac_sys_system" = "UnixWare" -o "$ac_sys_system" = "OpenUNIX"; then
++		ac_sys_release=`uname -v`
++	else
++		ac_sys_release=`uname -r`
++	fi
++    fi
++    ac_md_system=`echo $ac_sys_system |
++			tr -d '[/ ]' | tr '[[A-Z]]' '[[a-z]]'`
++    ac_md_release=`echo $ac_sys_release |
++			tr -d '[/ ]' | sed 's/^[[A-Z]]\.//' | sed 's/\..*//'`
++    MACHDEP="$ac_md_system$ac_md_release"
++
++    case $MACHDEP in
++	aix*) MACHDEP="aix";;
++	linux*) MACHDEP="linux";;
++	cygwin*) MACHDEP="cygwin";;
++	darwin*) MACHDEP="darwin";;
++	'')	MACHDEP="unknown";;
++    esac
++
++    if test "$ac_sys_system" = "SunOS"; then
++	# For Solaris, there isn't an OS version specific macro defined
++	# in most compilers, so we define one here.
++	SUNOS_VERSION=`echo $ac_sys_release | sed -e 's!\.\([0-9]\)$!.0\1!g' | tr -d '.'`
++	AC_DEFINE_UNQUOTED([Py_SUNOS_VERSION], [$SUNOS_VERSION],
++	                   [The version of SunOS/Solaris as reported by `uname -r' without the dot.])
++    fi
++fi
++AC_MSG_RESULT(["$MACHDEP"])
++
++# On cross-compile builds, configure will look for a host-specific compiler by
++# prepending the user-provided host triple to the required binary name.
++#
++# On iOS/tvOS/watchOS, this results in binaries like "arm64-apple-ios13.0-simulator-gcc",
++# which isn't a binary that exists, and isn't very convenient, as it contains the
++# iOS version. As the default cross-compiler name won't exist, configure falls
++# back to gcc, which *definitely* won't work. We're providing wrapper scripts for
++# these tools; the binary names of these scripts are better defaults than "gcc".
++# This only requires that the user put the platform scripts folder (e.g.,
++# "iOS/Resources/bin") in their path, rather than defining platform-specific
++# names/paths for AR, CC, CPP, and CXX explicitly; and if the user forgets to
++# either put the platform scripts folder in the path, or specify CC etc,
++# configure will fail.
++if test -z "$AR"; then
++	case "$host" in
++		aarch64-apple-ios*-simulator) AR=arm64-apple-ios-simulator-ar ;;
++		aarch64-apple-ios*)           AR=arm64-apple-ios-ar ;;
++		x86_64-apple-ios*-simulator)  AR=x86_64-apple-ios-simulator-ar ;;
++
++		aarch64-apple-tvos*-simulator) AR=arm64-apple-tvos-simulator-ar ;;
++		aarch64-apple-tvos*)           AR=arm64-apple-tvos-ar ;;
++		x86_64-apple-tvos*-simulator)  AR=x86_64-apple-tvos-simulator-ar ;;
++
++		aarch64-apple-watchos*-simulator) AR=arm64-apple-watchos-simulator-ar ;;
++		aarch64-apple-watchos*)           AR=arm64_32-apple-watchos-ar ;;
++		x86_64-apple-watchos*-simulator)  AR=x86_64-apple-watchos-simulator-ar ;;
++		*)
++	esac
++fi
++if test -z "$CC"; then
++	case "$host" in
++		aarch64-apple-ios*-simulator) CC=arm64-apple-ios-simulator-clang ;;
++		aarch64-apple-ios*)           CC=arm64-apple-ios-clang ;;
++		x86_64-apple-ios*-simulator)  CC=x86_64-apple-ios-simulator-clang ;;
++
++		aarch64-apple-tvos*-simulator) CC=arm64-apple-tvos-simulator-clang ;;
++		aarch64-apple-tvos*)           CC=arm64-apple-tvos-clang ;;
++		x86_64-apple-tvos*-simulator)  CC=x86_64-apple-tvos-simulator-clang ;;
++
++		aarch64-apple-watchos*-simulator) CC=arm64-apple-watchos-simulator-clang ;;
++		aarch64-apple-watchos*)           CC=arm64_32-apple-watchos-clang ;;
++		x86_64-apple-watchos*-simulator)  CC=x86_64-apple-watchos-simulator-clang ;;
++		*)
++	esac
++fi
++if test -z "$CPP"; then
++	case "$host" in
++		aarch64-apple-ios*-simulator) CPP=arm64-apple-ios-simulator-cpp ;;
++		aarch64-apple-ios*)           CPP=arm64-apple-ios-cpp ;;
++		x86_64-apple-ios*-simulator)  CPP=x86_64-apple-ios-simulator-cpp ;;
++
++		aarch64-apple-tvos*-simulator) CPP=arm64-apple-tvos-simulator-cpp ;;
++		aarch64-apple-tvos*)           CPP=arm64-apple-tvos-cpp ;;
++		x86_64-apple-tvos*-simulator)  CPP=x86_64-apple-tvos-simulator-cpp ;;
++
++		aarch64-apple-watchos*-simulator) CPP=arm64-apple-watchos-simulator-cpp ;;
++		aarch64-apple-watchos*)           CPP=arm64_32-apple-watchos-cpp ;;
++		x86_64-apple-watchos*-simulator)  CPP=x86_64-apple-watchos-simulator-cpp ;;
++		*)
++	esac
++fi
++if test -z "$CXX"; then
++	case "$host" in
++		aarch64-apple-ios*-simulator) CXX=arm64-apple-ios-simulator-clang++ ;;
++		aarch64-apple-ios*)           CXX=arm64-apple-ios-clang++ ;;
++		x86_64-apple-ios*-simulator)  CXX=x86_64-apple-ios-simulator-clang++ ;;
++
++		aarch64-apple-tvos*-simulator) CXX=arm64-apple-tvos-simulator-clang++ ;;
++		aarch64-apple-tvos*)           CXX=arm64-apple-tvos-clang++ ;;
++		x86_64-apple-tvos*-simulator)  CXX=x86_64-apple-tvos-simulator-clang++ ;;
++
++		aarch64-apple-watchos*-simulator) CXX=arm64-apple-watchos-simulator-clang++ ;;
++		aarch64-apple-watchos*)           CXX=arm64_32-apple-watchos-clang++ ;;
++		x86_64-apple-watchos*-simulator)  CXX=x86_64-apple-watchos-simulator-clang++ ;;
++		*)
++	esac
++fi
++
+ AC_MSG_CHECKING([for --enable-universalsdk])
+ AC_ARG_ENABLE([universalsdk],
+ 	AS_HELP_STRING([--enable-universalsdk@<:@=SDKDIR@:>@],
+@@ -424,109 +579,189 @@ AC_ARG_ENABLE([framework],
+ [
+ 	case $enableval in
+ 	yes)
+-		enableval=/Library/Frameworks
++		case $ac_sys_system in
++			Darwin)  enableval=/Library/Frameworks ;;
++			iOS)     enableval=Platforms/Apple/iOS/Frameworks/\$\(MULTIARCH\) ;;
++			tvOS)    enableval=Platforms/Apple/tvOS/Frameworks/\$\(MULTIARCH\) ;;
++			watchOS) enableval=Platforms/Apple/watchOS/Frameworks/\$\(MULTIARCH\) ;;
++			*) AC_MSG_ERROR([Unknown platform for framework build])
++		esac
+ 	esac
++
+ 	case $enableval in
+ 	no)
+-		PYTHONFRAMEWORK=
+-		PYTHONFRAMEWORKDIR=no-framework
+-		PYTHONFRAMEWORKPREFIX=
+-		PYTHONFRAMEWORKINSTALLDIR=
+-		FRAMEWORKINSTALLFIRST=
+-		FRAMEWORKINSTALLLAST=
+-		FRAMEWORKALTINSTALLFIRST=
+-		FRAMEWORKALTINSTALLLAST=
+-		FRAMEWORKPYTHONW=
+-		if test "x${prefix}" = "xNONE"; then
+-			FRAMEWORKUNIXTOOLSPREFIX="${ac_default_prefix}"
+-		else
+-			FRAMEWORKUNIXTOOLSPREFIX="${prefix}"
+-		fi
+-		enable_framework=
++		case $ac_sys_system in
++			iOS) AC_MSG_ERROR([iOS builds must use --enable-framework]) ;;
++			tvOS) AC_MSG_ERROR([tvOS builds must use --enable-framework]) ;;
++			watchOS) AC_MSG_ERROR([watchOS builds must use --enable-framework]) ;;
++			*)
++				PYTHONFRAMEWORK=
++				PYTHONFRAMEWORKDIR=no-framework
++				PYTHONFRAMEWORKPREFIX=
++				PYTHONFRAMEWORKINSTALLDIR=
++				PYTHONFRAMEWORKINSTALLNAMEPREFIX=
++				RESSRCDIR=
++				FRAMEWORKINSTALLFIRST=
++				FRAMEWORKINSTALLLAST=
++				FRAMEWORKALTINSTALLFIRST=
++				FRAMEWORKALTINSTALLLAST=
++				FRAMEWORKPYTHONW=
++				INSTALLTARGETS="commoninstall bininstall maninstall"
++
++				if test "x${prefix}" = "xNONE"; then
++					FRAMEWORKUNIXTOOLSPREFIX="${ac_default_prefix}"
++				else
++					FRAMEWORKUNIXTOOLSPREFIX="${prefix}"
++				fi
++				enable_framework=
++		esac
+ 		;;
+ 	*)
+ 		PYTHONFRAMEWORKPREFIX="${enableval}"
+ 		PYTHONFRAMEWORKINSTALLDIR=$PYTHONFRAMEWORKPREFIX/$PYTHONFRAMEWORKDIR
+-		FRAMEWORKINSTALLFIRST="frameworkinstallstructure"
+-		FRAMEWORKALTINSTALLFIRST="frameworkinstallstructure "
+-		FRAMEWORKINSTALLLAST="frameworkinstallmaclib frameworkinstallapps frameworkinstallunixtools"
+-		FRAMEWORKALTINSTALLLAST="frameworkinstallmaclib frameworkinstallapps frameworkaltinstallunixtools"
+-		FRAMEWORKPYTHONW="frameworkpythonw"
+-		FRAMEWORKINSTALLAPPSPREFIX="/Applications"
+-
+-		if test "x${prefix}" = "xNONE" ; then
+-			FRAMEWORKUNIXTOOLSPREFIX="${ac_default_prefix}"
+-
+-		else
+-			FRAMEWORKUNIXTOOLSPREFIX="${prefix}"
+-		fi
+ 
+-		case "${enableval}" in
+-		/System*)
+-			FRAMEWORKINSTALLAPPSPREFIX="/Applications"
+-			if test "${prefix}" = "NONE" ; then
+-				# See below
+-				FRAMEWORKUNIXTOOLSPREFIX="/usr"
+-			fi
+-			;;
++		case $ac_sys_system in #(
++			Darwin) :
++				FRAMEWORKINSTALLFIRST="frameworkinstallversionedstructure"
++				FRAMEWORKALTINSTALLFIRST="frameworkinstallversionedstructure "
++				FRAMEWORKINSTALLLAST="frameworkinstallmaclib frameworkinstallapps frameworkinstallunixtools"
++				FRAMEWORKALTINSTALLLAST="frameworkinstallmaclib frameworkinstallapps frameworkaltinstallunixtools"
++				FRAMEWORKPYTHONW="frameworkpythonw"
++				FRAMEWORKINSTALLAPPSPREFIX="/Applications"
++				INSTALLTARGETS="commoninstall bininstall maninstall"
++
++				if test "x${prefix}" = "xNONE" ; then
++					FRAMEWORKUNIXTOOLSPREFIX="${ac_default_prefix}"
++
++				else
++					FRAMEWORKUNIXTOOLSPREFIX="${prefix}"
++				fi
+ 
+-		/Library*)
+-			FRAMEWORKINSTALLAPPSPREFIX="/Applications"
+-			;;
++				case "${enableval}" in
++				/System*)
++					FRAMEWORKINSTALLAPPSPREFIX="/Applications"
++					if test "${prefix}" = "NONE" ; then
++						# See below
++						FRAMEWORKUNIXTOOLSPREFIX="/usr"
++					fi
++					;;
++
++				/Library*)
++					FRAMEWORKINSTALLAPPSPREFIX="/Applications"
++					;;
++
++				*/Library/Frameworks)
++					MDIR="`dirname "${enableval}"`"
++					MDIR="`dirname "${MDIR}"`"
++					FRAMEWORKINSTALLAPPSPREFIX="${MDIR}/Applications"
++
++					if test "${prefix}" = "NONE"; then
++						# User hasn't specified the
++						# --prefix option, but wants to install
++						# the framework in a non-default location,
++						# ensure that the compatibility links get
++						# installed relative to that prefix as well
++						# instead of in /usr/local.
++						FRAMEWORKUNIXTOOLSPREFIX="${MDIR}"
++					fi
++					;;
+ 
+-		*/Library/Frameworks)
+-			MDIR="`dirname "${enableval}"`"
+-			MDIR="`dirname "${MDIR}"`"
+-			FRAMEWORKINSTALLAPPSPREFIX="${MDIR}/Applications"
+-
+-			if test "${prefix}" = "NONE"; then
+-				# User hasn't specified the
+-				# --prefix option, but wants to install
+-				# the framework in a non-default location,
+-				# ensure that the compatibility links get
+-				# installed relative to that prefix as well
+-				# instead of in /usr/local.
+-				FRAMEWORKUNIXTOOLSPREFIX="${MDIR}"
+-			fi
+-			;;
++				*)
++					FRAMEWORKINSTALLAPPSPREFIX="/Applications"
++					;;
++				esac
+ 
+-		*)
+-			FRAMEWORKINSTALLAPPSPREFIX="/Applications"
+-			;;
++				prefix=$PYTHONFRAMEWORKINSTALLDIR/Versions/$VERSION
++				PYTHONFRAMEWORKINSTALLNAMEPREFIX=${prefix}
++				RESSRCDIR=Mac/Resources/framework
++
++				# Add files for Mac specific code to the list of output
++				# files:
++				AC_CONFIG_FILES([Mac/Makefile])
++				AC_CONFIG_FILES([Mac/PythonLauncher/Makefile])
++				AC_CONFIG_FILES([Mac/Resources/framework/Info.plist])
++				AC_CONFIG_FILES([Mac/Resources/app/Info.plist])
++				;;
++			iOS) :
++				FRAMEWORKINSTALLFIRST="frameworkinstallunversionedstructure"
++				FRAMEWORKALTINSTALLFIRST="frameworkinstallunversionedstructure "
++				FRAMEWORKINSTALLLAST="frameworkinstallmobileheaders"
++				FRAMEWORKALTINSTALLLAST="frameworkinstallmobileheaders"
++				FRAMEWORKPYTHONW=
++				INSTALLTARGETS="libinstall inclinstall sharedinstall"
++
++				prefix=$PYTHONFRAMEWORKPREFIX
++				PYTHONFRAMEWORKINSTALLNAMEPREFIX="@rpath/$PYTHONFRAMEWORKDIR"
++				RESSRCDIR=Platforms/Apple/iOS/Resources
++
++				AC_CONFIG_FILES([Platforms/Apple/iOS/Resources/Info.plist])
++				;;
++			tvOS) :
++				FRAMEWORKINSTALLFIRST="frameworkinstallunversionedstructure"
++				FRAMEWORKALTINSTALLFIRST="frameworkinstallunversionedstructure "
++				FRAMEWORKINSTALLLAST="frameworkinstallmobileheaders"
++				FRAMEWORKALTINSTALLLAST="frameworkinstallmobileheaders"
++				FRAMEWORKPYTHONW=
++				INSTALLTARGETS="libinstall inclinstall sharedinstall"
++
++				prefix=$PYTHONFRAMEWORKPREFIX
++				PYTHONFRAMEWORKINSTALLNAMEPREFIX="@rpath/$PYTHONFRAMEWORKDIR"
++				RESSRCDIR=Platforms/Apple/tvOS/Resources
++
++				AC_CONFIG_FILES([Platforms/Apple/tvOS/Resources/Info.plist])
++				;;
++			watchOS) :
++				FRAMEWORKINSTALLFIRST="frameworkinstallunversionedstructure"
++				FRAMEWORKALTINSTALLFIRST="frameworkinstallunversionedstructure "
++				FRAMEWORKINSTALLLAST="frameworkinstallmobileheaders"
++				FRAMEWORKALTINSTALLLAST="frameworkinstallmobileheaders"
++				FRAMEWORKPYTHONW=
++				INSTALLTARGETS="libinstall inclinstall sharedinstall"
++
++				prefix=$PYTHONFRAMEWORKPREFIX
++				PYTHONFRAMEWORKINSTALLNAMEPREFIX="@rpath/$PYTHONFRAMEWORKDIR"
++				RESSRCDIR=Platforms/Apple/watchOS/Resources
++
++				AC_CONFIG_FILES([Platforms/Apple/watchOS/Resources/Info.plist])
++				;;
++			*)
++				AC_MSG_ERROR([Unknown platform for framework build])
++				;;
++			esac
+ 		esac
+-
+-		prefix=$PYTHONFRAMEWORKINSTALLDIR/Versions/$VERSION
+-
+-		# Add files for Mac specific code to the list of output
+-		# files:
+-		AC_CONFIG_FILES([Mac/Makefile])
+-		AC_CONFIG_FILES([Mac/PythonLauncher/Makefile])
+-		AC_CONFIG_FILES([Mac/Resources/framework/Info.plist])
+-		AC_CONFIG_FILES([Mac/Resources/app/Info.plist])
+-	esac
+ 	],[
+-	PYTHONFRAMEWORK=
+-	PYTHONFRAMEWORKDIR=no-framework
+-	PYTHONFRAMEWORKPREFIX=
+-	PYTHONFRAMEWORKINSTALLDIR=
+-	FRAMEWORKINSTALLFIRST=
+-	FRAMEWORKINSTALLLAST=
+-	FRAMEWORKALTINSTALLFIRST=
+-	FRAMEWORKALTINSTALLLAST=
+-	FRAMEWORKPYTHONW=
+-	if test "x${prefix}" = "xNONE" ; then
+-		FRAMEWORKUNIXTOOLSPREFIX="${ac_default_prefix}"
+-	else
+-		FRAMEWORKUNIXTOOLSPREFIX="${prefix}"
+-	fi
+-	enable_framework=
+-
++	case $ac_sys_system in
++		iOS) AC_MSG_ERROR([iOS builds must use --enable-framework]) ;;
++		tvOS) AC_MSG_ERROR([tvOS builds must use --enable-framework]) ;;
++		watchOS) AC_MSG_ERROR([watchOS builds must use --enable-framework]) ;;
++		*)
++			PYTHONFRAMEWORK=
++			PYTHONFRAMEWORKDIR=no-framework
++			PYTHONFRAMEWORKPREFIX=
++			PYTHONFRAMEWORKINSTALLDIR=
++			PYTHONFRAMEWORKINSTALLNAMEPREFIX=
++			RESSRCDIR=
++			FRAMEWORKINSTALLFIRST=
++			FRAMEWORKINSTALLLAST=
++			FRAMEWORKALTINSTALLFIRST=
++			FRAMEWORKALTINSTALLLAST=
++			FRAMEWORKPYTHONW=
++			INSTALLTARGETS="commoninstall bininstall maninstall"
++			if test "x${prefix}" = "xNONE" ; then
++				FRAMEWORKUNIXTOOLSPREFIX="${ac_default_prefix}"
++			else
++				FRAMEWORKUNIXTOOLSPREFIX="${prefix}"
++			fi
++			enable_framework=
++	esac
+ ])
+ AC_SUBST([PYTHONFRAMEWORK])
+ AC_SUBST([PYTHONFRAMEWORKIDENTIFIER])
+ AC_SUBST([PYTHONFRAMEWORKDIR])
+ AC_SUBST([PYTHONFRAMEWORKPREFIX])
+ AC_SUBST([PYTHONFRAMEWORKINSTALLDIR])
++AC_SUBST([PYTHONFRAMEWORKINSTALLNAMEPREFIX])
++AC_SUBST([RESSRCDIR])
+ AC_SUBST([FRAMEWORKINSTALLFIRST])
+ AC_SUBST([FRAMEWORKINSTALLLAST])
+ AC_SUBST([FRAMEWORKALTINSTALLFIRST])
+@@ -534,77 +769,51 @@ AC_SUBST([FRAMEWORKALTINSTALLLAST])
+ AC_SUBST([FRAMEWORKPYTHONW])
+ AC_SUBST([FRAMEWORKUNIXTOOLSPREFIX])
+ AC_SUBST([FRAMEWORKINSTALLAPPSPREFIX])
++AC_SUBST([INSTALLTARGETS])
+ 
+ AC_DEFINE_UNQUOTED([_PYTHONFRAMEWORK], ["${PYTHONFRAMEWORK}"],
+                    [framework name])
+ 
+-# Set name for machine-dependent library files
+-AC_ARG_VAR([MACHDEP], [name for machine-dependent library files])
+-AC_MSG_CHECKING([MACHDEP])
+-if test -z "$MACHDEP"
+-then
+-    # avoid using uname for cross builds
+-    if test "$cross_compiling" = yes; then
+-       # ac_sys_system and ac_sys_release are used for setting
+-       # a lot of different things including 'define_xopen_source'
+-       # in the case statement below.
+-	case "$host" in
+-	*-*-linux-android*)
+-		ac_sys_system=Linux-android
+-		;;
+-	*-*-linux*)
+-		ac_sys_system=Linux
+-		;;
+-	*-*-cygwin*)
+-		ac_sys_system=Cygwin
+-		;;
+-	*-*-vxworks*)
+-	    ac_sys_system=VxWorks
+-	    ;;
+-	*-*-emscripten)
+-	    ac_sys_system=Emscripten
+-	    ;;
+-	*-*-wasi)
+-	    ac_sys_system=WASI
+-	    ;;
+-	*)
+-		# for now, limit cross builds to known configurations
+-		MACHDEP="unknown"
+-		AC_MSG_ERROR([cross build not supported for $host])
+-	esac
+-	ac_sys_release=
+-    else
+-	ac_sys_system=`uname -s`
+-	if test "$ac_sys_system" = "AIX" \
+-	-o "$ac_sys_system" = "UnixWare" -o "$ac_sys_system" = "OpenUNIX"; then
+-		ac_sys_release=`uname -v`
+-	else
+-		ac_sys_release=`uname -r`
+-	fi
+-    fi
+-    ac_md_system=`echo $ac_sys_system |
+-			tr -d '[/ ]' | tr '[[A-Z]]' '[[a-z]]'`
+-    ac_md_release=`echo $ac_sys_release |
+-			tr -d '[/ ]' | sed 's/^[[A-Z]]\.//' | sed 's/\..*//'`
+-    MACHDEP="$ac_md_system$ac_md_release"
+-
+-    case $MACHDEP in
+-	aix*) MACHDEP="aix";;
+-	linux*) MACHDEP="linux";;
+-	cygwin*) MACHDEP="cygwin";;
+-	darwin*) MACHDEP="darwin";;
+-	'')	MACHDEP="unknown";;
++dnl quadrigraphs "@<:@" and "@:>@" produce "[" and "]" in the output
++AC_MSG_CHECKING([for --with-app-store-compliance])
++AC_ARG_WITH(
++  [app_store_compliance],
++  [AS_HELP_STRING(
++    [--with-app-store-compliance=@<:@PATCH-FILE@:>@],
++    [Enable any patches required for compiliance with app stores.
++     Optional PATCH-FILE specifies the custom patch to apply.]
++  )],[
++    case "$withval" in
++    yes)
++      case $ac_sys_system in
++        Darwin|iOS|tvOS|watchOS)
++          # iOS/tvOS/watchOS is able to share the macOS patch
++          APP_STORE_COMPLIANCE_PATCH="Mac/Resources/app-store-compliance.patch"
++          ;;
++        *) AC_MSG_ERROR([no default app store compliance patch available for $ac_sys_system]) ;;
++      esac
++      AC_MSG_RESULT([applying default app store compliance patch])
++      ;;
++    *)
++      APP_STORE_COMPLIANCE_PATCH="${withval}"
++      AC_MSG_RESULT([applying custom app store compliance patch])
++      ;;
+     esac
+-
+-    if test "$ac_sys_system" = "SunOS"; then
+-	# For Solaris, there isn't an OS version specific macro defined
+-	# in most compilers, so we define one here.
+-	SUNOS_VERSION=`echo $ac_sys_release | sed -e 's!\.\([0-9]\)$!.0\1!g' | tr -d '.'`
+-	AC_DEFINE_UNQUOTED([Py_SUNOS_VERSION], [$SUNOS_VERSION],
+-	                   [The version of SunOS/Solaris as reported by `uname -r' without the dot.])
+-    fi
+-fi
+-AC_MSG_RESULT(["$MACHDEP"])
++  ],[
++    case $ac_sys_system in
++      iOS|tvOS|watchOS)
++        # Always apply the compliance patch on iOS/tvOS/watchOS; we can use the macOS patch
++        APP_STORE_COMPLIANCE_PATCH="Mac/Resources/app-store-compliance.patch"
++        AC_MSG_RESULT([applying default app store compliance patch])
++        ;;
++      *)
++        # No default app compliance patching on any other platform
++        APP_STORE_COMPLIANCE_PATCH=
++        AC_MSG_RESULT([not patching for app store compliance])
++        ;;
++    esac
++])
++AC_SUBST([APP_STORE_COMPLIANCE_PATCH])
+ 
+ AC_SUBST([_PYTHON_HOST_PLATFORM])
+ if test "$cross_compiling" = yes; then
+@@ -612,27 +821,87 @@ if test "$cross_compiling" = yes; then
+ 	*-*-linux*)
+ 		case "$host_cpu" in
+ 		arm*)
+-			_host_cpu=arm
++			_host_ident=arm
+ 			;;
+ 		*)
+-			_host_cpu=$host_cpu
++			_host_ident=$host_cpu
+ 		esac
+ 		;;
+ 	*-*-cygwin*)
+-		_host_cpu=
++		_host_ident=
++		;;
++	*-apple-ios*)
++		_host_os=`echo $host | cut -d '-' -f3`
++		_host_device=`echo $host | cut -d '-' -f4`
++		_host_device=${_host_device:=os}
++
++		# IPHONEOS_DEPLOYMENT_TARGET is the minimum supported iOS version
++		AC_MSG_CHECKING([iOS deployment target])
++		IPHONEOS_DEPLOYMENT_TARGET=${_host_os:3}
++		IPHONEOS_DEPLOYMENT_TARGET=${IPHONEOS_DEPLOYMENT_TARGET:=13.0}
++		AC_MSG_RESULT([$IPHONEOS_DEPLOYMENT_TARGET])
++
++		case "$host_cpu" in
++			aarch64)
++				_host_ident=${IPHONEOS_DEPLOYMENT_TARGET}-arm64-iphone${_host_device}
++				;;
++			*)
++				_host_ident=${IPHONEOS_DEPLOYMENT_TARGET}-$host_cpu-iphone${_host_device}
++				;;
++		esac
++		;;
++	*-apple-tvos*)
++		_host_os=`echo $host | cut -d '-' -f3`
++		_host_device=`echo $host | cut -d '-' -f4`
++		_host_device=${_host_device:=os}
++
++		# TVOS_DEPLOYMENT_TARGET is the minimum supported tvOS version
++		AC_MSG_CHECKING([tvOS deployment target])
++		TVOS_DEPLOYMENT_TARGET=${_host_os:4}
++		TVOS_DEPLOYMENT_TARGET=${TVOS_DEPLOYMENT_TARGET:=12.0}
++		AC_MSG_RESULT([$TVOS_DEPLOYMENT_TARGET])
++
++		case "$host_cpu" in
++			aarch64)
++				_host_ident=${TVOS_DEPLOYMENT_TARGET}-arm64-appletv${_host_device}
++				;;
++			*)
++				_host_ident=${TVOS_DEPLOYMENT_TARGET}-$host_cpu-appletv${_host_device}
++				;;
++		esac
++		;;
++	*-apple-watchos*)
++		_host_os=`echo $host | cut -d '-' -f3`
++		_host_device=`echo $host | cut -d '-' -f4`
++		_host_device=${_host_device:=os}
++
++		# WATCHOS_DEPLOYMENT_TARGET is the minimum supported watchOS version
++		AC_MSG_CHECKING([watchOS deployment target])
++		WATCHOS_DEPLOYMENT_TARGET=${_host_os:7}
++		WATCHOS_DEPLOYMENT_TARGET=${WATCHOS_DEPLOYMENT_TARGET:=4.0}
++		AC_MSG_RESULT([$WATCHOS_DEPLOYMENT_TARGET])
++
++		case "$host_cpu" in
++			aarch64)
++				_host_ident=${WATCHOS_DEPLOYMENT_TARGET}-arm64-watch${_host_device}
++				;;
++			*)
++				_host_ident=${WATCHOS_DEPLOYMENT_TARGET}-$host_cpu-watch${_host_device}
++				;;
++		esac
+ 		;;
+ 	*-*-vxworks*)
+-		_host_cpu=$host_cpu
++		_host_ident=$host_cpu
+ 		;;
+ 	wasm32-*-* | wasm64-*-*)
+-		_host_cpu=$host_cpu
++		_host_ident=$host_cpu
+ 		;;
+ 	*)
+ 		# for now, limit cross builds to known configurations
+ 		MACHDEP="unknown"
+ 		AC_MSG_ERROR([cross build not supported for $host])
+ 	esac
+-	_PYTHON_HOST_PLATFORM="$MACHDEP${_host_cpu:+-$_host_cpu}"
++	_PYTHON_HOST_PLATFORM="$MACHDEP${_host_ident:+-$_host_ident}"
+ fi
+ 
+ # Some systems cannot stand _XOPEN_SOURCE being defined at all; they
+@@ -698,6 +967,13 @@ case $ac_sys_system/$ac_sys_release in
+     define_xopen_source=no;;
+   Darwin/@<:@[12]@:>@@<:@0-9@:>@.*)
+     define_xopen_source=no;;
++  # On iOS/tvOS/watchOS, defining _POSIX_C_SOURCE also disables platform specific features.
++  iOS/*)
++    define_xopen_source=no;;
++  tvOS/*)
++    define_xopen_source=no;;
++  watchOS/*)
++    define_xopen_source=no;;
+   # On QNX 6.3.2, defining _XOPEN_SOURCE prevents netdb.h from
+   # defining NI_NUMERICHOST.
+   QNX/6.3.2)
+@@ -756,6 +1032,12 @@ AC_SUBST([EXPORT_MACOSX_DEPLOYMENT_TARGET])
+ CONFIGURE_MACOSX_DEPLOYMENT_TARGET=
+ EXPORT_MACOSX_DEPLOYMENT_TARGET='#'
+ 
++# Record the value of IPHONEOS_DEPLOYMENT_TARGET / TVOS_DEPLOYMENT_TARGET /
++# WATCHOS_DEPLOYMENT_TARGET enforced by the selected host triple.
++AC_SUBST([IPHONEOS_DEPLOYMENT_TARGET])
++AC_SUBST([TVOS_DEPLOYMENT_TARGET])
++AC_SUBST([WATCHOS_DEPLOYMENT_TARGET])
++
+ # checks for alternative programs
+ 
+ # compiler flags are generated in two sets, BASECFLAGS and OPT.  OPT is just
+@@ -788,6 +1070,29 @@ AS_CASE([$host],
+   ],
+ )
+ 
++dnl Add the compiler flag for the iOS/tvOS/watchOS minimum supported OS version.
++AS_CASE([$host],
++  [*-apple-ios*-simulator], [
++    AS_VAR_APPEND([CFLAGS], [" -mios-simulator-version-min=${IPHONEOS_DEPLOYMENT_TARGET}"])
++    AS_VAR_APPEND([LDFLAGS], [" -mios-simulator-version-min=${IPHONEOS_DEPLOYMENT_TARGET}"])
++  ],[*-apple-ios*], [
++    AS_VAR_APPEND([CFLAGS], [" -mios-version-min=${IPHONEOS_DEPLOYMENT_TARGET}"])
++    AS_VAR_APPEND([LDFLAGS], [" -mios-version-min=${IPHONEOS_DEPLOYMENT_TARGET}"])
++  ],[*-apple-tvos*-simulator], [
++    AS_VAR_APPEND([CFLAGS], [" -mtvos-simulator-version-min=${TVOS_DEPLOYMENT_TARGET}"])
++    AS_VAR_APPEND([LDFLAGS], [" -mtvos-simulator-version-min=${TVOS_DEPLOYMENT_TARGET}"])
++  ],[*-apple-tvos*], [
++    AS_VAR_APPEND([CFLAGS], [" -mtvos-version-min=${TVOS_DEPLOYMENT_TARGET}"])
++    AS_VAR_APPEND([LDFLAGS], [" -mtvos-version-min=${TVOS_DEPLOYMENT_TARGET}"])
++  ],[*-apple-watchos*-simulator], [
++    AS_VAR_APPEND([CFLAGS], [" -mwatchos-simulator-version-min=${WATCHOS_DEPLOYMENT_TARGET}"])
++    AS_VAR_APPEND([LDFLAGS], [" -mwatchos-simulator-version-min=${WATCHOS_DEPLOYMENT_TARGET}"])
++  ],[*-apple-watchos*], [
++    AS_VAR_APPEND([CFLAGS], [" -mwatchos-version-min=${WATCHOS_DEPLOYMENT_TARGET}"])
++    AS_VAR_APPEND([LDFLAGS], [" -mwatchos-version-min=${WATCHOS_DEPLOYMENT_TARGET}"])
++  ],
++)
++
+ if test "$ac_sys_system" = "Darwin"
+ then
+   dnl look for SDKROOT
+@@ -1085,7 +1390,42 @@ cat > conftest.c <<EOF
+ #elif defined(__gnu_hurd__)
+         i386-gnu
+ #elif defined(__APPLE__)
++#  include "TargetConditionals.h"
++#  if TARGET_OS_IOS
++#    if TARGET_OS_SIMULATOR
++#      if __x86_64__
++        x86_64-iphonesimulator
++#      else
++        arm64-iphonesimulator
++#      endif
++#    else
++        arm64-iphoneos
++#    endif
++#  elif TARGET_OS_TV
++#    if TARGET_OS_SIMULATOR
++#      if __x86_64__
++        x86_64-appletvsimulator
++#      else
++        arm64-appletvsimulator
++#      endif
++#    else
++        arm64-appletvos
++#    endif
++#  elif TARGET_OS_WATCH
++#    if TARGET_OS_SIMULATOR
++#      if __x86_64__
++        x86_64-watchsimulator
++#      else
++        arm64-watchsimulator
++#      endif
++#    else
++        arm64_32-watchos
++#    endif
++#  elif TARGET_OS_OSX
+         darwin
++#  else
++#    error unknown Apple platform
++#  endif
+ #elif defined(__VXWORKS__)
+         vxworks
+ #elif defined(__wasm32__)
+@@ -1127,14 +1467,24 @@ else
+ fi
+ rm -f conftest.c conftest.out
+ 
++dnl On some platforms, using a true "triplet" for MULTIARCH would be redundant.
++dnl For example, `arm64-apple-darwin` is redundant, because there isn't a
++dnl non-Apple Darwin. Including the CPU architecture can also be potentially
++dnl redundant - on macOS, for example, it's possible to do a single compile
++dnl pass that includes multiple architectures, so it would be misleading for
++dnl MULTIARCH (and thus the sysconfigdata module name) to include a single CPU
++dnl architecture. PLATFORM_TRIPLET will be a pair or single value for these
++dnl platforms.
+ AC_MSG_CHECKING([for multiarch])
+ AS_CASE([$ac_sys_system],
+   [Darwin*], [MULTIARCH=""],
++  [iOS], [MULTIARCH=""],
++  [tvOS], [MULTIARCH=""],
++  [watchOS], [MULTIARCH=""],
+   [FreeBSD*], [MULTIARCH=""],
+   [MULTIARCH=$($CC --print-multiarch 2>/dev/null)]
+ )
+ AC_SUBST([MULTIARCH])
+-AC_MSG_RESULT([$MULTIARCH])
+ 
+ if test x$PLATFORM_TRIPLET != x && test x$MULTIARCH != x; then
+   if test x$PLATFORM_TRIPLET != x$MULTIARCH; then
+@@ -1144,6 +1494,17 @@ elif test x$PLATFORM_TRIPLET != x && test x$MULTIARCH = x; then
+   MULTIARCH=$PLATFORM_TRIPLET
+ fi
+ AC_SUBST([PLATFORM_TRIPLET])
++AC_MSG_RESULT([$MULTIARCH])
++
++dnl Even if we *do* include the CPU architecture in the MULTIARCH value, some
++dnl platforms don't need the CPU architecture in the SOABI tag. These platforms
++dnl will have multiple sysconfig modules (one for each CPU architecture), but
++dnl use a single "fat" binary at runtime. SOABI_PLATFORM is the component of
++dnl the PLATFORM_TRIPLET that will be used in binary module extensions.
++AS_CASE([$ac_sys_system],
++  [iOS|tvOS|watchOS], [SOABI_PLATFORM=`echo "$PLATFORM_TRIPLET" | cut -d '-' -f2`],
++  [SOABI_PLATFORM=$PLATFORM_TRIPLET]
++)
+ 
+ if test x$MULTIARCH != x; then
+   MULTIARCH_CPPFLAGS="-DMULTIARCH=\\\"$MULTIARCH\\\""
+@@ -1174,6 +1535,12 @@ AS_CASE([$host/$ac_cv_cc_name],
+   [wasm32-unknown-emscripten/clang], [PY_SUPPORT_TIER=3], dnl WebAssembly Emscripten
+   [wasm32-unknown-wasi/clang],       [PY_SUPPORT_TIER=3], dnl WebAssembly System Interface
+   [x86_64-*-freebsd*/clang],         [PY_SUPPORT_TIER=3], dnl FreeBSD on AMD64
++  [aarch64-apple-ios*-simulator/clang],   [PY_SUPPORT_TIER=3], dnl iOS Simulator on arm64
++  [aarch64-apple-ios*/clang],             [PY_SUPPORT_TIER=3], dnl iOS on ARM64
++  [aarch64-apple-tvos*-simulator/clang],  [PY_SUPPORT_TIER=3], dnl tvOS Simulator on arm64
++  [aarch64-apple-tvos*/clang],            [PY_SUPPORT_TIER=3], dnl tvOS on ARM64
++  [aarch64-apple-watchos*-simulator/clang],   [PY_SUPPORT_TIER=3], dnl watchOS Simulator on arm64
++  [arm64_32-apple-watchos*/clang],            [PY_SUPPORT_TIER=3], dnl watchOS on ARM64
+   [PY_SUPPORT_TIER=0]
+ )
+ 
+@@ -1490,17 +1857,25 @@ fi
+ 
+ AC_MSG_CHECKING([LDLIBRARY])
+ 
+-# MacOSX framework builds need more magic. LDLIBRARY is the dynamic
++# Apple framework builds need more magic. LDLIBRARY is the dynamic
+ # library that we build, but we do not want to link against it (we
+ # will find it with a -framework option). For this reason there is an
+ # extra variable BLDLIBRARY against which Python and the extension
+ # modules are linked, BLDLIBRARY. This is normally the same as
+-# LDLIBRARY, but empty for MacOSX framework builds.
++# LDLIBRARY, but empty for MacOSX framework builds. iOS does the same,
++# but uses a non-versioned framework layout.
+ if test "$enable_framework"
+ then
+-  LDLIBRARY='$(PYTHONFRAMEWORKDIR)/Versions/$(VERSION)/$(PYTHONFRAMEWORK)'
+-  RUNSHARED=DYLD_FRAMEWORK_PATH=`pwd`${DYLD_FRAMEWORK_PATH:+:${DYLD_FRAMEWORK_PATH}}
++  case $ac_sys_system in
++    Darwin)
++      LDLIBRARY='$(PYTHONFRAMEWORKDIR)/Versions/$(VERSION)/$(PYTHONFRAMEWORK)';;
++    iOS|tvOS|watchOS)
++      LDLIBRARY='$(PYTHONFRAMEWORKDIR)/$(PYTHONFRAMEWORK)';;
++    *)
++      AC_MSG_ERROR([Unknown platform for framework build]);;
++  esac
+   BLDLIBRARY=''
++  RUNSHARED=DYLD_FRAMEWORK_PATH=`pwd`${DYLD_FRAMEWORK_PATH:+:${DYLD_FRAMEWORK_PATH}}
+ else
+   BLDLIBRARY='$(LDLIBRARY)'
+ fi
+@@ -1512,64 +1887,69 @@ if test $enable_shared = "yes"; then
+             [Defined if Python is built as a shared library.])
+   case $ac_sys_system in
+     CYGWIN*)
+-          LDLIBRARY='libpython$(LDVERSION).dll.a'
+-          DLLLIBRARY='libpython$(LDVERSION).dll'
+-          ;;
++      LDLIBRARY='libpython$(LDVERSION).dll.a'
++      DLLLIBRARY='libpython$(LDVERSION).dll'
++      ;;
+     SunOS*)
+-	  LDLIBRARY='libpython$(LDVERSION).so'
+-	  BLDLIBRARY='-Wl,-R,$(LIBDIR) -L. -lpython$(LDVERSION)'
+-	  RUNSHARED=LD_LIBRARY_PATH=`pwd`${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}
+-	  INSTSONAME="$LDLIBRARY".$SOVERSION
+-	  if test "$with_pydebug" != yes
+-	  then
+-	      PY3LIBRARY=libpython3.so
+-	  fi
+-          ;;
++      LDLIBRARY='libpython$(LDVERSION).so'
++      BLDLIBRARY='-Wl,-R,$(LIBDIR) -L. -lpython$(LDVERSION)'
++      RUNSHARED=LD_LIBRARY_PATH=`pwd`${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}
++      INSTSONAME="$LDLIBRARY".$SOVERSION
++      if test "$with_pydebug" != yes
++      then
++        PY3LIBRARY=libpython3.so
++      fi
++      ;;
+     Linux*|GNU*|NetBSD*|FreeBSD*|DragonFly*|OpenBSD*|VxWorks*)
+-	  LDLIBRARY='libpython$(LDVERSION).so'
+-	  BLDLIBRARY='-L. -lpython$(LDVERSION)'
+-	  RUNSHARED=LD_LIBRARY_PATH=`pwd`${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}
+-	  INSTSONAME="$LDLIBRARY".$SOVERSION
+-	  if test "$with_pydebug" != yes
+-          then
+-	      PY3LIBRARY=libpython3.so
+-	  fi
+-	  ;;
++      LDLIBRARY='libpython$(LDVERSION).so'
++      BLDLIBRARY='-L. -lpython$(LDVERSION)'
++      RUNSHARED=LD_LIBRARY_PATH=`pwd`${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}
++      INSTSONAME="$LDLIBRARY".$SOVERSION
++      if test "$with_pydebug" != yes
++      then
++        PY3LIBRARY=libpython3.so
++      fi
++      ;;
+     hp*|HP*)
+-	  case `uname -m` in
+-		ia64)
+-			LDLIBRARY='libpython$(LDVERSION).so'
+-			;;
+-		*)
+-			LDLIBRARY='libpython$(LDVERSION).sl'
+-			;;
+-	  esac
+-	  BLDLIBRARY='-Wl,+b,$(LIBDIR) -L. -lpython$(LDVERSION)'
+-	  RUNSHARED=SHLIB_PATH=`pwd`${SHLIB_PATH:+:${SHLIB_PATH}}
+-	  ;;
++      case `uname -m` in
++        ia64)
++          LDLIBRARY='libpython$(LDVERSION).so'
++          ;;
++        *)
++          LDLIBRARY='libpython$(LDVERSION).sl'
++          ;;
++      esac
++      BLDLIBRARY='-Wl,+b,$(LIBDIR) -L. -lpython$(LDVERSION)'
++      RUNSHARED=SHLIB_PATH=`pwd`${SHLIB_PATH:+:${SHLIB_PATH}}
++      ;;
+     Darwin*)
+-    	LDLIBRARY='libpython$(LDVERSION).dylib'
+-	BLDLIBRARY='-L. -lpython$(LDVERSION)'
+-	RUNSHARED=DYLD_LIBRARY_PATH=`pwd`${DYLD_LIBRARY_PATH:+:${DYLD_LIBRARY_PATH}}
+-	;;
++      LDLIBRARY='libpython$(LDVERSION).dylib'
++      BLDLIBRARY='-L. -lpython$(LDVERSION)'
++      RUNSHARED=DYLD_LIBRARY_PATH=`pwd`${DYLD_LIBRARY_PATH:+:${DYLD_LIBRARY_PATH}}
++      ;;
++    iOS|tvOS|watchOS)
++      LDLIBRARY='libpython$(LDVERSION).dylib'
++      ;;
+     AIX*)
+-	LDLIBRARY='libpython$(LDVERSION).so'
+-	RUNSHARED=LIBPATH=`pwd`${LIBPATH:+:${LIBPATH}}
+-	;;
++      LDLIBRARY='libpython$(LDVERSION).so'
++      RUNSHARED=LIBPATH=`pwd`${LIBPATH:+:${LIBPATH}}
++      ;;
+ 
+   esac
+ else # shared is disabled
+   PY_ENABLE_SHARED=0
+   case $ac_sys_system in
+     CYGWIN*)
+-          BLDLIBRARY='$(LIBRARY)'
+-          LDLIBRARY='libpython$(LDVERSION).dll.a'
+-          ;;
++      BLDLIBRARY='$(LIBRARY)'
++      LDLIBRARY='libpython$(LDVERSION).dll.a'
++      ;;
+   esac
+ fi
+ 
++AC_MSG_RESULT([$LDLIBRARY])
++
+ if test "$cross_compiling" = yes; then
+-	RUNSHARED=
++  RUNSHARED=
+ fi
+ 
+ AC_ARG_VAR([HOSTRUNNER], [Program to run CPython for the host platform])
+@@ -1625,8 +2005,6 @@ if test -n "$HOSTRUNNER"; then
+   PYTHON_FOR_BUILD="_PYTHON_HOSTRUNNER='$HOSTRUNNER' $PYTHON_FOR_BUILD"
+ fi
+ 
+-AC_MSG_RESULT([$LDLIBRARY])
+-
+ # LIBRARY_DEPS, LINK_PYTHON_OBJS and LINK_PYTHON_DEPS variable
+ AS_CASE([$ac_sys_system/$ac_sys_emscripten_target],
+   [Emscripten/browser*], [LIBRARY_DEPS='$(PY3LIBRARY) $(WASM_STDLIB) python.html python.worker.js'],
+@@ -3388,6 +3766,11 @@ then
+ 			BLDSHARED="$LDSHARED"
+ 		fi
+ 		;;
++	iOS/*|tvOS/*|watchOS/*)
++		LDSHARED='$(CC) -dynamiclib -F . -framework $(PYTHONFRAMEWORK)'
++		LDCXXSHARED='$(CXX) -dynamiclib -F . -framework $(PYTHONFRAMEWORK)'
++		BLDSHARED="$LDSHARED"
++		;;
+ 	Emscripten*|WASI*)
+ 		LDSHARED='$(CC) -shared'
+ 		LDCXXSHARED='$(CXX) -shared';;
+@@ -3508,30 +3891,34 @@ then
+ 	Linux-android*) LINKFORSHARED="-pie -Xlinker -export-dynamic";;
+ 	Linux*|GNU*) LINKFORSHARED="-Xlinker -export-dynamic";;
+ 	# -u libsys_s pulls in all symbols in libsys
+-	Darwin/*)
++	Darwin/*|iOS/*|tvOS/*|watchOS/*)
+ 		LINKFORSHARED="$extra_undefs -framework CoreFoundation"
+ 
+ 		# Issue #18075: the default maximum stack size (8MBytes) is too
+ 		# small for the default recursion limit. Increase the stack size
+ 		# to ensure that tests don't crash
+-    stack_size="1000000"  # 16 MB
+-    if test "$with_ubsan" = "yes"
+-    then
+-        # Undefined behavior sanitizer requires an even deeper stack
+-        stack_size="4000000"  # 64 MB
+-    fi
++		stack_size="1000000"  # 16 MB
++		if test "$with_ubsan" = "yes"
++		then
++			# Undefined behavior sanitizer requires an even deeper stack
++			stack_size="4000000"  # 64 MB
++		fi
+ 
+-    LINKFORSHARED="-Wl,-stack_size,$stack_size $LINKFORSHARED"
++		AC_DEFINE_UNQUOTED([THREAD_STACK_SIZE],
++				[0x$stack_size],
++				[Custom thread stack size depending on chosen sanitizer runtimes.])
+ 
+-    AC_DEFINE_UNQUOTED([THREAD_STACK_SIZE],
+-        [0x$stack_size],
+-        [Custom thread stack size depending on chosen sanitizer runtimes.])
++		if test $ac_sys_system = "Darwin"; then
++			LINKFORSHARED="-Wl,-stack_size,$stack_size $LINKFORSHARED"
+ 
+-		if test "$enable_framework"
+-		then
+-			LINKFORSHARED="$LINKFORSHARED "'$(PYTHONFRAMEWORKDIR)/Versions/$(VERSION)/$(PYTHONFRAMEWORK)'
++			if test "$enable_framework"; then
++				LINKFORSHARED="$LINKFORSHARED "'$(PYTHONFRAMEWORKDIR)/Versions/$(VERSION)/$(PYTHONFRAMEWORK)'
++			fi
++			LINKFORSHARED="$LINKFORSHARED"
++		elif test "$ac_sys_system" = "iOS" -o "$ac_sys_system" = "tvOS" -o "$ac_sys_system" = "watchOS"; then
++			LINKFORSHARED="-Wl,-stack_size,$stack_size $LINKFORSHARED "'$(PYTHONFRAMEWORKDIR)/$(PYTHONFRAMEWORK)'
+ 		fi
+-		LINKFORSHARED="$LINKFORSHARED";;
++		;;
+ 	OpenUNIX*|UnixWare*) LINKFORSHARED="-Wl,-Bexport";;
+ 	SCO_SV*) LINKFORSHARED="-Wl,-Bexport";;
+ 	ReliantUNIX*) LINKFORSHARED="-W1 -Blargedynsym";;
+@@ -3905,6 +4292,9 @@ AS_VAR_IF([have_libffi], [yes], [
+       dnl when do we need USING_APPLE_OS_LIBFFI?
+       ctypes_malloc_closure=yes
+     ],
++    [iOS|tvOS|watchOS], [
++      ctypes_malloc_closure=yes
++    ],
+     [sunos5], [AS_VAR_APPEND([LIBFFI_LIBS], [" -mimpure-text"])]
+   )
+   AS_VAR_IF([ctypes_malloc_closure], [yes], [
+@@ -4928,28 +5318,28 @@ fi
+ # checks for library functions
+ AC_CHECK_FUNCS([ \
+   accept4 alarm bind_textdomain_codeset chmod chown clock close_range confstr \
+-  copy_file_range ctermid dup dup3 execv explicit_bzero explicit_memset \
++  copy_file_range ctermid dup explicit_bzero explicit_memset \
+   faccessat fchmod fchmodat fchown fchownat fdopendir fdwalk fexecve \
+-  fork fork1 fpathconf fstatat ftime ftruncate futimens futimes futimesat \
+-  gai_strerror getegid getentropy geteuid getgid getgrgid getgrgid_r \
+-  getgrnam_r getgrouplist getgroups gethostname getitimer getloadavg getlogin \
++  fpathconf fstatat ftime ftruncate futimens futimes futimesat \
++  gai_strerror getegid geteuid getgid getgrgid getgrgid_r \
++  getgrnam_r getgrouplist gethostname getitimer getloadavg getlogin \
+   getpeername getpgid getpid getppid getpriority _getpty \
+   getpwent getpwnam_r getpwuid getpwuid_r getresgid getresuid getrusage getsid getspent \
+   getspnam getuid getwd if_nameindex initgroups kill killpg lchown linkat \
+   lockf lstat lutimes madvise mbrtowc memrchr mkdirat mkfifo mkfifoat \
+   mknod mknodat mktime mmap mremap nice openat opendir pathconf pause pipe \
+-  pipe2 plock poll posix_fadvise posix_fallocate posix_spawn posix_spawnp \
++  plock poll posix_fadvise posix_fallocate \
+   pread preadv preadv2 pthread_condattr_setclock pthread_init pthread_kill \
+   pwrite pwritev pwritev2 readlink readlinkat readv realpath renameat \
+   rtpSpawn sched_get_priority_max sched_rr_get_interval sched_setaffinity \
+   sched_setparam sched_setscheduler sem_clockwait sem_getvalue sem_open \
+   sem_timedwait sem_unlink sendfile setegid seteuid setgid sethostname \
+   setitimer setlocale setpgid setpgrp setpriority setregid setresgid \
+-  setresuid setreuid setsid setuid setvbuf shutdown sigaction sigaltstack \
++  setresuid setreuid setsid setuid setvbuf shutdown sigaction \
+   sigfillset siginterrupt sigpending sigrelse sigtimedwait sigwait \
+   sigwaitinfo snprintf splice strftime strlcpy strsignal symlinkat sync \
+-  sysconf system tcgetpgrp tcsetpgrp tempnam timegm times tmpfile \
+-  tmpnam tmpnam_r truncate ttyname_r umask uname unlinkat utimensat utimes vfork \
++  sysconf tcgetpgrp tcsetpgrp tempnam timegm times tmpfile \
++  tmpnam tmpnam_r truncate ttyname umask uname unlinkat utimensat utimes vfork \
+   wait wait3 wait4 waitid waitpid wcscoll wcsftime wcsxfrm wmemcmp writev \
+ ])
+ 
+@@ -4960,6 +5350,28 @@ if test "$MACHDEP" != linux; then
+   AC_CHECK_FUNCS([lchmod])
+ fi
+ 
++# iOS/tvOS/watchOS define some system methods that can be linked (so they are
++# found by configure), but either raise a compilation error (because the
++# header definition prevents usage - autoconf doesn't use the headers), or
++# raise an error if used at runtime. Force these symbols off.
++if test "$ac_sys_system" != "iOS" -a "$ac_sys_system" != "tvOS" -a "$ac_sys_system" != "watchOS" ; then
++  AC_CHECK_FUNCS([getentropy getgroups system])
++fi
++# In addition, macOS introduced dup3 and pipe2 in macOS 27, late in the
++# lifetime of this version of Python. Rather than adding weaklinking
++# support for them, just continue to ignore them.
++if test "$ac_sys_system" != "iOS" -a "$ac_sys_system" != "tvOS" -a "$ac_sys_system" != "visionOS" -a "$ac_sys_system" != "watchOS" -a "$ac_sys_system" != "Darwin"; then
++  AC_CHECK_FUNCS([dup3 pipe2])
++fi
++
++# tvOS/watchOS have some additional methods that can be found, but not used.
++if test "$ac_sys_system" != "tvOS" -a "$ac_sys_system" != "watchOS" ; then
++  AC_CHECK_FUNCS([ \
++    execv fork fork1 posix_spawn posix_spawnp \
++    sigaltstack \
++  ])
++fi
++
+ AC_CHECK_DECL([dirfd],
+               [AC_DEFINE([HAVE_DIRFD], [1],
+                          [Define if you have the 'dirfd' function or macro.])],
+@@ -5201,20 +5613,22 @@ PY_CHECK_FUNC([setgroups], [
+ ])
+ 
+ # check for openpty, login_tty, and forkpty
+-
+-AC_CHECK_FUNCS([openpty], [],
+-  [AC_CHECK_LIB([util], [openpty],
+-    [AC_DEFINE([HAVE_OPENPTY]) LIBS="$LIBS -lutil"],
+-    [AC_CHECK_LIB([bsd], [openpty],
+-      [AC_DEFINE([HAVE_OPENPTY]) LIBS="$LIBS -lbsd"])])])
+-AC_SEARCH_LIBS([login_tty], [util],
+- [AC_DEFINE([HAVE_LOGIN_TTY], [1], [Define to 1 if you have the `login_tty' function.])]
+-)
+-AC_CHECK_FUNCS([forkpty], [],
+-  [AC_CHECK_LIB([util], [forkpty],
+-    [AC_DEFINE([HAVE_FORKPTY]) LIBS="$LIBS -lutil"],
+-    [AC_CHECK_LIB([bsd], [forkpty],
+-      [AC_DEFINE([HAVE_FORKPTY]) LIBS="$LIBS -lbsd"])])])
++# tvOS/watchOS have functions for tty, but can't use them
++if test "$ac_sys_system" != "tvOS" -a "$ac_sys_system" != "watchOS" ; then
++  AC_CHECK_FUNCS([openpty], [],
++    [AC_CHECK_LIB([util], [openpty],
++      [AC_DEFINE([HAVE_OPENPTY]) LIBS="$LIBS -lutil"],
++      [AC_CHECK_LIB([bsd], [openpty],
++        [AC_DEFINE([HAVE_OPENPTY]) LIBS="$LIBS -lbsd"])])])
++  AC_SEARCH_LIBS([login_tty], [util],
++   [AC_DEFINE([HAVE_LOGIN_TTY], [1], [Define to 1 if you have the `login_tty' function.])]
++  )
++  AC_CHECK_FUNCS([forkpty], [],
++    [AC_CHECK_LIB([util], [forkpty],
++      [AC_DEFINE([HAVE_FORKPTY]) LIBS="$LIBS -lutil"],
++      [AC_CHECK_LIB([bsd], [forkpty],
++        [AC_DEFINE([HAVE_FORKPTY]) LIBS="$LIBS -lbsd"])])])
++fi
+ 
+ # check for long file support functions
+ AC_CHECK_FUNCS([fseek64 fseeko fstatvfs ftell64 ftello statvfs])
+@@ -5297,11 +5711,17 @@ AC_CHECK_FUNCS([clock_getres], [], [
+     ])
+ ])
+ 
+-AC_CHECK_FUNCS([clock_settime], [], [
+-    AC_CHECK_LIB([rt], [clock_settime], [
+-        AC_DEFINE([HAVE_CLOCK_SETTIME], [1])
+-    ])
+-])
++# On iOS, tvOS and watchOS, clock_settime can be linked (so it is found by
++# configure), but when used in an unprivileged process, it crashes rather than
++# returning an error. Force the symbol off.
++if test "$ac_sys_system" != "iOS" -a "$ac_sys_system" != "tvOS" -a "$ac_sys_system" != "watchOS"
++then
++  AC_CHECK_FUNCS([clock_settime], [], [
++      AC_CHECK_LIB([rt], [clock_settime], [
++          AC_DEFINE([HAVE_CLOCK_SETTIME], [1])
++      ])
++  ])
++fi
+ 
+ AC_CHECK_FUNCS([clock_nanosleep], [], [
+     AC_CHECK_LIB([rt], [clock_nanosleep], [
+@@ -5447,7 +5867,9 @@ int main(void)
+ [ac_cv_buggy_getaddrinfo=no],
+ [ac_cv_buggy_getaddrinfo=yes],
+ [
+-if test "${enable_ipv6+set}" = set; then
++if test "$ac_sys_system" = "Linux-android" -o "$ac_sys_system" = "iOS" -o "$ac_sys_system" = "tvOS" -o "$ac_sys_system" = "watchOS"; then
++  ac_cv_buggy_getaddrinfo="no"
++elif test "${enable_ipv6+set}" = set; then
+   ac_cv_buggy_getaddrinfo="no -- configured with --(en|dis)able-ipv6"
+ else
+   ac_cv_buggy_getaddrinfo=yes
+@@ -6000,14 +6422,14 @@ AC_SUBST([SOABI])
+ AC_MSG_CHECKING([ABIFLAGS])
+ AC_MSG_RESULT([$ABIFLAGS])
+ AC_MSG_CHECKING([SOABI])
+-SOABI='cpython-'`echo $VERSION | tr -d .`${ABIFLAGS}${PLATFORM_TRIPLET:+-$PLATFORM_TRIPLET}
++SOABI='cpython-'`echo $VERSION | tr -d .`${ABIFLAGS}${SOABI_PLATFORM:+-$SOABI_PLATFORM}
+ AC_MSG_RESULT([$SOABI])
+ 
+ # Release and debug (Py_DEBUG) ABI are compatible, but not Py_TRACE_REFS ABI
+ if test "$Py_DEBUG" = 'true' -a "$with_trace_refs" != "yes"; then
+   # Similar to SOABI but remove "d" flag from ABIFLAGS
+   AC_SUBST([ALT_SOABI])
+-  ALT_SOABI='cpython-'`echo $VERSION | tr -d .``echo $ABIFLAGS | tr -d d`${PLATFORM_TRIPLET:+-$PLATFORM_TRIPLET}
++  ALT_SOABI='cpython-'`echo $VERSION | tr -d .``echo $ABIFLAGS | tr -d d`${SOABI_PLATFORM:+-$SOABI_PLATFORM}
+   AC_DEFINE_UNQUOTED([ALT_SOABI], ["${ALT_SOABI}"],
+             [Alternative SOABI used in debug build to load C extensions built in release mode])
+ fi
+@@ -6656,28 +7078,35 @@ CPPFLAGS=$ac_save_cppflags
+ AC_MSG_NOTICE([checking for device files])
+ 
+ dnl NOTE: Inform user how to proceed with files when cross compiling.
+-if test "x$cross_compiling" = xyes; then
+-  if test "${ac_cv_file__dev_ptmx+set}" != set; then
+-    AC_MSG_CHECKING([for /dev/ptmx])
+-    AC_MSG_RESULT([not set])
+-    AC_MSG_ERROR([set ac_cv_file__dev_ptmx to yes/no in your CONFIG_SITE file when cross compiling])
+-  fi
+-  if test "${ac_cv_file__dev_ptc+set}" != set; then
+-    AC_MSG_CHECKING([for /dev/ptc])
+-    AC_MSG_RESULT([not set])
+-    AC_MSG_ERROR([set ac_cv_file__dev_ptc to yes/no in your CONFIG_SITE file when cross compiling])
++dnl iOS cross-compile builds are predictable; they won't ever
++dnl have /dev/ptmx or /dev/ptc, so we can set them explicitly.
++if test "$ac_sys_system" = "iOS" -o "$ac_sys_system" = "tvOS" -o "$ac_sys_system" = "watchOS" ; then
++  ac_cv_file__dev_ptmx=no
++  ac_cv_file__dev_ptc=no
++else
++  if test "x$cross_compiling" = xyes; then
++    if test "${ac_cv_file__dev_ptmx+set}" != set; then
++      AC_MSG_CHECKING([for /dev/ptmx])
++      AC_MSG_RESULT([not set])
++      AC_MSG_ERROR([set ac_cv_file__dev_ptmx to yes/no in your CONFIG_SITE file when cross compiling])
++    fi
++    if test "${ac_cv_file__dev_ptc+set}" != set; then
++      AC_MSG_CHECKING([for /dev/ptc])
++      AC_MSG_RESULT([not set])
++      AC_MSG_ERROR([set ac_cv_file__dev_ptc to yes/no in your CONFIG_SITE file when cross compiling])
++    fi
+   fi
+-fi
+ 
+-AC_CHECK_FILE([/dev/ptmx], [], [])
+-if test "x$ac_cv_file__dev_ptmx" = xyes; then
+-  AC_DEFINE([HAVE_DEV_PTMX], [1],
+-  [Define to 1 if you have the /dev/ptmx device file.])
+-fi
+-AC_CHECK_FILE([/dev/ptc], [], [])
+-if test "x$ac_cv_file__dev_ptc" = xyes; then
+-  AC_DEFINE([HAVE_DEV_PTC], [1],
+-  [Define to 1 if you have the /dev/ptc device file.])
++  AC_CHECK_FILE([/dev/ptmx], [], [])
++  if test "x$ac_cv_file__dev_ptmx" = xyes; then
++    AC_DEFINE([HAVE_DEV_PTMX], [1],
++    [Define to 1 if you have the /dev/ptmx device file.])
++  fi
++  AC_CHECK_FILE([/dev/ptc], [], [])
++  if test "x$ac_cv_file__dev_ptc" = xyes; then
++    AC_DEFINE([HAVE_DEV_PTC], [1],
++    [Define to 1 if you have the /dev/ptc device file.])
++  fi
+ fi
+ 
+ if test $ac_sys_system = Darwin
+@@ -6949,6 +7378,7 @@ AC_ARG_WITH([ensurepip],
+       AS_CASE([$ac_sys_system],
+         [Emscripten], [with_ensurepip=no],
+         [WASI], [with_ensurepip=no],
++        [iOS|tvOS|watchOS], [with_ensurepip=no],
+         [with_ensurepip=upgrade]
+       )
+     ])
+@@ -7291,6 +7721,28 @@ AS_CASE([$ac_sys_system],
+   [AIX], [PY_STDLIB_MOD_SET_NA([_scproxy], [spwd])],
+   [VxWorks*], [PY_STDLIB_MOD_SET_NA([_scproxy], [_crypt], [termios], [grp])],
+   [Darwin], [PY_STDLIB_MOD_SET_NA([ossaudiodev], [spwd])],
++  [iOS|tvOS|watchOS], [
++    dnl subprocess and multiprocessing are not supported (no fork syscall).
++    dnl curses and tkinter user interface are not available.
++    dnl gdbm and nis aren't available
++    dnl Stub implementations are provided for pwd, grp etc APIs
++    PY_STDLIB_MOD_SET_NA(
++      [_curses],
++      [_curses_panel],
++      [_gdbm],
++      [_multiprocessing],
++      [_posixshmem],
++      [_posixsubprocess],
++      [_scproxy],
++      [_tkinter],
++      [grp],
++      [nis],
++      [readline],
++      [pwd],
++      [spwd],
++      [syslog],
++    )
++  ],
+   [CYGWIN*], [PY_STDLIB_MOD_SET_NA([_scproxy], [nis])],
+   [QNX*], [PY_STDLIB_MOD_SET_NA([_scproxy], [nis])],
+   [FreeBSD*], [PY_STDLIB_MOD_SET_NA([_scproxy], [spwd])],

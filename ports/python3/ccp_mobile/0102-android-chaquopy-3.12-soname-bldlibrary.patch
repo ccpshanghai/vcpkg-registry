@@ -1,0 +1,76 @@
+diff --git a/Makefile.pre.in b/Makefile.pre.in
+index d4e74e5..d6d99dc 100644
+--- a/Makefile.pre.in
++++ b/Makefile.pre.in
+@@ -824,7 +824,7 @@ libpython$(LDVERSION).so: $(LIBRARY_OBJS) $(DTRACE_OBJS)
+ 		$(BLDSHARED) -Wl,-h$(INSTSONAME) -o $(INSTSONAME) $(LIBRARY_OBJS) $(MODLIBS) $(SHLIBS) $(LIBC) $(LIBM); \
+ 		$(LN) -f $(INSTSONAME) $@; \
+ 	else \
+-		$(BLDSHARED) -o $@ $(LIBRARY_OBJS) $(MODLIBS) $(SHLIBS) $(LIBC) $(LIBM); \
++		$(BLDSHARED) -Wl,-h$@ -o $@ $(LIBRARY_OBJS) $(MODLIBS) $(SHLIBS) $(LIBC) $(LIBM); \
+ 	fi
+ 
+ libpython3.so:	libpython$(LDVERSION).so
+@@ -2814,7 +2814,7 @@ Python/thread.o: @THREADHEADERS@ $(srcdir)/Python/condvar.h
+ 
+ # force rebuild when header file or module build flavor (static/shared) is changed
+ MODULE_DEPS_STATIC=Modules/config.c
+-MODULE_DEPS_SHARED=$(MODULE_DEPS_STATIC) $(EXPORTSYMS)
++MODULE_DEPS_SHARED=@MODULE_DEPS_SHARED@
+ 
+ MODULE_CMATH_DEPS=$(srcdir)/Modules/_math.h
+ MODULE_MATH_DEPS=$(srcdir)/Modules/_math.h
+diff --git a/Modules/makesetup b/Modules/makesetup
+index f000c9c..3231044 100755
+--- a/Modules/makesetup
++++ b/Modules/makesetup
+@@ -286,7 +286,7 @@ sed -e 's/[ 	]*#.*//' -e '/^[ 	]*$/d' |
+ 				;;
+ 			esac
+ 			rule="$file: $objs"
+-			rule="$rule; \$(BLDSHARED) $objs $libs $ExtraLibs -o $file"
++			rule="$rule; \$(BLDSHARED) $objs $libs \$(LIBPYTHON) -o $file"
+ 			echo "$rule" >>$rulesf
+ 		done
+ 	done
+diff --git a/configure.ac b/configure.ac
+index 6db95d9..0428883 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -1529,7 +1529,11 @@ if test $enable_shared = "yes"; then
+ 	  LDLIBRARY='libpython$(LDVERSION).so'
+ 	  BLDLIBRARY='-L. -lpython$(LDVERSION)'
+ 	  RUNSHARED=LD_LIBRARY_PATH=`pwd`${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}
+-	  INSTSONAME="$LDLIBRARY".$SOVERSION
++	  dnl Chaquopy soname.patch: the Android Gradle plugin only packages libraries whose
++	  dnl names end in ".so", so Android keeps libpython3.x.so without a version suffix.
++	  if test "$ac_sys_system" != "Linux-android"; then
++	    INSTSONAME="$LDLIBRARY".$SOVERSION
++	  fi
+ 	  if test "$with_pydebug" != yes
+           then
+ 	      PY3LIBRARY=libpython3.so
+@@ -6019,12 +6023,19 @@ AC_MSG_CHECKING([LDVERSION])
+ LDVERSION='$(VERSION)$(ABIFLAGS)'
+ AC_MSG_RESULT([$LDVERSION])
+ 
+-# On Android and Cygwin the shared libraries must be linked with libpython.
++# Configure the flags and dependencies used when compiling shared modules.
++# Do not rename LIBPYTHON - it's accessed via sysconfig by package build
++# systems (e.g. Meson) to decide whether to link extension modules against
++# libpython. (Chaquopy bldlibrary.patch, backported from CPython 3.13.)
++AC_SUBST([MODULE_DEPS_SHARED])
+ AC_SUBST([LIBPYTHON])
++MODULE_DEPS_SHARED='$(MODULE_DEPS_STATIC) $(EXPORTSYMS)'
++LIBPYTHON=''
++
++# On Android and Cygwin the shared libraries must be linked with libpython.
+ if test "$PY_ENABLE_SHARED" = "1" && ( test -n "$ANDROID_API_LEVEL" || test "$MACHDEP" = "cygwin"); then
+-  LIBPYTHON="-lpython${VERSION}${ABIFLAGS}"
+-else
+-  LIBPYTHON=''
++  MODULE_DEPS_SHARED="$MODULE_DEPS_SHARED \$(LDLIBRARY)"
++  LIBPYTHON="\$(BLDLIBRARY)"
+ fi
+ 
+ 

@@ -15,9 +15,6 @@ if(WIN32)
         IMPORTED_LOCATION "${_VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin/_greenlet.pyd"
     )
 else()
-    # The APPLE/WIN32 pair used to fall through to a FATAL_ERROR on Android, which is why
-    # carbon-scheduler failed there with "Greenlet not supported on platform". Every
-    # non-Windows target installs lib/_greenlet.so, so one branch covers them all.
     set_target_properties(Greenlet PROPERTIES
         IMPORTED_LOCATION "${_VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/lib/_greenlet.so"
     )
